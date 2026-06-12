@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Data and models (never commit these)
+data/
+models/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Secrets / API keys
+.env
+*.key
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# W&B local logs
+wandb/
