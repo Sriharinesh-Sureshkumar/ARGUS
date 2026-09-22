@@ -1,0 +1,18 @@
+{
+  "input_dim": 11,
+  "hidden_dim": 8,
+  "bottleneck_dim": 5,
+  "feature_order": [
+    "peak_yaw_delta",
+    "peak_pitch_delta",
+    "mean_yaw_delta",
+    "snap_count",
+    "min_cv_yaw",
+    "min_cv_pitch",
+    "cv_yaw_std",
+    "cv_pitch_std",
+    "fire_on_target_rate",
+    "yaw_jerk",
+    "engagement_firing_rate"
+  ]
+}

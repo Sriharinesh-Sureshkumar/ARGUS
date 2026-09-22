@@ -161,3 +161,38 @@ supersedes the old one and say so explicitly.
 are appended below this line, never inserted above or overwriting
 existing history.*
 ---
+
+## Phase 2.1 — Isolation Forest (production) + Autoencoder (from scratch)
+- Isolation Forest: legit-only novelty fit, finalized for production,
+  AUC-ROC on test set: 0.5904 (trained on cleanlab-cleaned training
+  data; reproduces Week 1's 0.5866 legit-only result within noise —
+  the small delta is expected since Week 1's number was measured on
+  the uncleaned split, and this run trains on the cleaned split per
+  Phase 1.6.5 methodology. Confirms no regression).
+- Note: the cleanlab-cleaned training array (flagged label-issue rows
+  removed from TRAIN only, test set untouched) was never persisted to
+  disk in Phase 1 — only held in notebook memory. Reproduced
+  deterministically in backend/core/model.py
+  (get_cleaned_train_test_data()) by replaying the same cleanlab
+  detection + train-only row removal against features_hybrid.csv, then
+  cached to backend/data/splits/X_train_cleaned.npy /
+  y_train_cleaned.npy for reuse by both models in this phase.
+- Autoencoder: architecture 11→8→5→8→11 (corrected from Doc 06's
+  generic 64→32→16, which would have been a bottleneck LARGER than
+  the 11-dim input — no real compression, would have broken the
+  anomaly signal). Trained on legit-only data (scaled with the
+  existing scaler.pkl, never refit), 59 epochs before early stopping
+  (patience=15, monitored on a 90/10 train/val split of the legit-only
+  training rows), final val_loss: 0.176238 (best val_loss: 0.176135).
+  No NaNs or early training instability observed.
+- Autoencoder AUC-ROC on test set: 0.5643.
+- Ensemble (50/50 average of normalized Isolation Forest + autoencoder
+  scores) AUC-ROC: 0.5912 — ensemble beat BOTH individual models
+  (Isolation Forest 0.5904, autoencoder 0.5643), though only by a
+  small margin over Isolation Forest alone.
+- Status: ADOPTED as the final ARGUS production ensemble. The
+  autoencoder underperforms Isolation Forest alone on this feature
+  set, but contributes a small net gain in the ensemble and provides
+  the latent bottleneck representation (encode()) needed for Phase 3
+  clustering — kept in the pipeline for that reason as well as the AUC
+  gain.
