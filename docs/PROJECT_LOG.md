@@ -196,3 +196,41 @@ existing history.*
   the latent bottleneck representation (encode()) needed for Phase 3
   clustering — kept in the pipeline for that reason as well as the AUC
   gain.
+
+## Phase 2.2 — Bounded hyperparameter tuning
+- IF grid tested: n_estimators in [100, 200, 300] x max_features in
+  [0.5, 0.7, 1.0] (9 configs, contamination='auto', random_state=42,
+  legit-only fit on cleaned training data, unscaled). Results ranged
+  0.5852-0.5941 AUC-ROC. Best: n_estimators=300, max_features=0.5,
+  AUC-ROC 0.5941.
+- AE grid tested: bottleneck_dim in [4, 5, 6] x learning_rate in
+  [1e-3, 5e-4] (6 configs, hidden_dim=8 fixed, batch_size=128,
+  max_epochs=200, patience=15, same 90/10 legit-only scaled split,
+  torch.manual_seed(42) reset per config). Results ranged
+  0.5355-0.6003 AUC-ROC; bottleneck_dim=6 configs stopped early
+  (epoch ~109-112) at a much lower val_loss (~0.133) but noticeably
+  worse AUC-ROC (0.5355-0.5396) than bottleneck_dim=4/5, confirming
+  reconstruction-error minimization and anomaly-detection AUC are not
+  the same objective. Best: bottleneck_dim=5, learning_rate=1e-3 (same
+  architecture as Phase 2.1, retrained), AUC-ROC 0.6003 — beats the
+  Phase 2.1 autoencoder (0.5643) by +0.0360, likely training-run
+  variance from PyTorch's non-deterministic ops rather than a real
+  hyperparameter effect, since the config itself is identical to
+  Phase 2.1's.
+- Ensemble weight tested: w (Isolation Forest weight) in
+  [0.3, 0.4, 0.5, 0.6, 0.7] using the best IF + best AE configs above.
+  AUC-ROC decreased monotonically as w increased (0.5987 at w=0.3 down
+  to 0.5951 at w=0.7) — the stronger autoencoder in this run pulled
+  the optimum away from 50/50 toward weighting it more heavily. Best:
+  w=0.3, AUC-ROC 0.5987.
+- Final result vs Phase 2.1 baseline (0.5912): Phase 2.2 best ensemble
+  (IF n_estimators=300/max_features=0.5, AE bottleneck_dim=5/lr=1e-3,
+  w=0.3) scored 0.5987 — a delta of +0.0075 over the Phase 2.1
+  baseline ensemble.
+- Status: Phase 2.2 tuned config ADOPTED as production. Overwrote
+  backend/trained_models/isolation_forest.pkl (n_estimators=300,
+  max_features=0.5) and autoencoder.pt (bottleneck_dim=5, lr=1e-3,
+  retrained). autoencoder_config.json unchanged (bottleneck_dim
+  stayed 5). Production ensemble weight updated to w=0.3 (IF) / 0.7
+  (AE) — the code applying this weight at inference time still needs
+  to be updated outside this notebook to match.
