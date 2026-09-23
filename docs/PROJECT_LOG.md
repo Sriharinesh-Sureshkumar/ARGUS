@@ -485,3 +485,38 @@ existing history.*
   project scoping) to engineer features from scratch rather than
   relying on a pre-processed Kaggle dataset. Legitimate, bounded
   extension; not attempted in the current build due to time/scope.
+
+## Phase 3.4 — K-Means clustering + UMAP (closes a gap from original plan)
+- k selection: tested [3, 4, 5, 6] on the autoencoder's 5-dim latent
+  bottleneck (all 10932 available players — cleanlab-cleaned train +
+  test combined, 1068 rows short of the original 12000 due to Phase
+  1.6 cleaning). Silhouette scores: k=3 → 0.3344 (best), k=4 → 0.2791,
+  k=5 → 0.2367, k=6 → 0.2383. final_k = 3.
+- Cluster sizes: cluster 0 = 4949 (45.3%), cluster 1 = 3621 (33.1%),
+  cluster 2 = 2362 (21.6%).
+- Archetype names assigned (from per-cluster raw-feature deviation
+  from the population mean, in std units):
+  - cluster 0 → "Average Player": every feature within ~0.16 std of
+    the population mean, no standout trait — the baseline/typical
+    group.
+  - cluster 1 → "Precise, Low-Volume Shooter": high
+    fire_on_target_rate (+0.86 std), low engagement_firing_rate
+    (-0.84 std), low peak_yaw_delta (-0.43 std), low yaw_jerk
+    (-0.39 std) — fires less often but lands far more shots, smaller/
+    smoother aim adjustments.
+  - cluster 2 → "High-Volume, Erratic Shooter": high
+    engagement_firing_rate (+1.04 std), high peak_yaw_delta
+    (+0.73 std), high yaw_jerk (+0.62 std), low fire_on_target_rate
+    (-0.97 std) — fires very often with large, jerky aim swings but
+    lands far fewer shots.
+- Cheater concentration by cluster (population rate 12.1%): cluster 0
+  = 9.5% (-2.6 pts), cluster 1 = 16.9% (+4.8 pts), cluster 2 = 10.0%
+  (-2.1 pts). Cluster 1 ("Precise, Low-Volume Shooter") is
+  disproportionately cheater-heavy — consistent with aimbot-style
+  precision (high accuracy from controlled, minimal aim movement)
+  being a genuine anomalous-behavior signal, though most players in
+  that cluster are still legitimate. This is a useful descriptive
+  note, not a validation of the archetype names themselves.
+- umap-learn added as a project dependency (`uv add umap-learn`).
+- Status: kmeans.pkl, umap_model.pkl, archetype_names.json ready for
+  Phase 4 FastAPI integration.

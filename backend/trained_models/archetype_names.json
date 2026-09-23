@@ -1,0 +1,20 @@
+{
+  "0": {
+    "archetype_name": "Average Player",
+    "description": "Every feature sits within ~0.16 std of the population mean -- no single behavioral trait stands out. The largest group (45.3% of players), representing typical/baseline play.",
+    "cheater_pct": 9.54,
+    "n_players": 4949
+  },
+  "1": {
+    "archetype_name": "Precise, Low-Volume Shooter",
+    "description": "Notably high fire_on_target_rate (+0.86 std) combined with low engagement_firing_rate (-0.84 std), low peak_yaw_delta (-0.43 std), and low yaw_jerk (-0.39 std): players who fire less often but land a much higher share of shots on target, with smaller, smoother aim adjustments. Controlled, selective, accurate play.",
+    "cheater_pct": 16.93,
+    "n_players": 3621
+  },
+  "2": {
+    "archetype_name": "High-Volume, Erratic Shooter",
+    "description": "Notably high engagement_firing_rate (+1.04 std), high peak_yaw_delta (+0.73 std), and high yaw_jerk (+0.62 std), combined with low fire_on_target_rate (-0.97 std): players who fire very frequently with large, jerky aim swings but land a much lower share of shots on target. Volume-over-precision, erratic aim play.",
+    "cheater_pct": 10.03,
+    "n_players": 2362
+  }
+}

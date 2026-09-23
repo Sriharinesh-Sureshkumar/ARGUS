@@ -14,6 +14,7 @@ dependencies = [
     "shap>=0.51.0",
     "torch>=2.12.0",
     "torchvision>=0.27.0",
+    "umap-learn>=0.5.12",
 ]
 
 [[tool.uv.index]]
