@@ -272,3 +272,216 @@ existing history.*
   model artifact. The weight value (0.3) is unchanged, but it now
   reflects a stable 5-seed estimate instead of a single outlier run,
   and the saved autoencoder.pt is a representative (not lucky) run.
+
+## Phase 3.1 — Production scoring function + SHAP explainability
+- backend/core/inference.py built (load_models(), score_players()),
+  using backend/trained_models/scoring_config.json as the single
+  source of truth for normalization bounds and ensemble weight —
+  never recomputed or hardcoded in this phase's code. Verified:
+  score_players() run on X_test reproduces ensemble AUC-ROC 0.6033,
+  exactly matching Phase 2.3.
+- SHAP: shap==0.51.0 added as a project dependency (`uv add shap`).
+  KernelExplainer with a 100-row legit-only background sample
+  (random_state=42) explained 30 test players (15 highest
+  ensemble_score + 15 random others). Took 52.2s, well within the
+  5-minute budget.
+- Global feature importance (mean |SHAP value| across the 30
+  players): min_cv_pitch dominates overwhelmingly (0.306), roughly
+  9x the next feature (peak_pitch_delta, 0.033), followed by
+  fire_on_target_rate (0.030), cv_yaw_std (0.027), yaw_jerk (0.024).
+  The 5 lowest-importance features (min_cv_yaw, peak_yaw_delta,
+  engagement_firing_rate, snap_count, mean_yaw_delta) each contribute
+  <0.023 — vertical crosshair-to-victim precision is by far the
+  strongest driver of anomaly scoring on this feature set, more than
+  any single yaw-based feature.
+- IF vs AE correlation across the 30 explained players: 0.9290 —
+  largely redundant on this sample. Caveat: the sample is 50% the
+  highest-scoring players, where both if_score and ae_score are
+  clipped to ~1.0 at the tails (percentile-bound saturation), which
+  mechanically inflates the correlation; the most-disagreeing players
+  (e.g. player_id=10220: if_score=0.7282 vs ae_score=0.1945, diff
+  0.5337) show the two models DO diverge meaningfully in the
+  mid-range, just not among the extreme top scorers examined here.
+  This tempers Phase 2.3's "genuinely complementary" hypothesis —
+  true at moderate anomaly levels, but the two models agree strongly
+  once either flags a player as a near-certain outlier.
+- Plain-language explanation format (FEATURE_DESCRIPTIONS) built for
+  all 11 features with real units (degrees, ms, %), plus engagement/
+  tick/real-time traceability for peak_yaw_delta and min_cv_yaw via
+  features_hybrid.csv's source_engagement/source_tick/
+  real_time_seconds columns. Verified against 3 flagged players
+  (2 legit false positives at ensemble_score 1.0000, 1 true cheater),
+  each showing a full player_id, per-model score breakdown, and top-5
+  plain-language feature explanation block.
+- Status: inference.py ready for Phase 4 FastAPI integration.
+
+## Phase 3.1.5 — SHAP method cross-check (min_cv_pitch dominance)
+- Surrogate RandomForestRegressor (n_estimators=200, random_state=42,
+  fit on X_test's 11 raw features -> ensemble_score) R² vs actual
+  ensemble_score: 0.9832 — well above the 0.7 trust threshold, so its
+  TreeExplainer SHAP values are trustworthy as a cross-check.
+- TreeExplainer min_cv_pitch dominance ratio: 14.90x (min_cv_pitch
+  0.32389 vs runner-up cv_yaw_std 0.02173) vs KernelExplainer's 9.25x
+  (min_cv_pitch 0.30593 vs runner-up peak_pitch_delta 0.03309).
+  min_cv_pitch ranked #1 under both methods.
+- Conclusion: dominance CONFIRMED as genuine — TreeExplainer (a
+  skew-robust, non-perturbation method) shows an EQUALLY LARGE OR
+  LARGER dominance ratio than KernelExplainer, not a smaller one.
+  min_cv_pitch's outsized SHAP importance is not a KernelExplainer
+  perturbation-method artifact on the floor-skewed feature; both
+  methods independently agree it's the dominant driver, and the
+  tree-based method finds the effect even more pronounced.
+- Status: no Phase 3.2 feature-transform follow-up needed to address
+  min_cv_pitch dominance specifically — it reflects the real
+  structure of the data (vertical crosshair-to-victim precision is
+  the strongest anomaly signal), not a measurement artifact. Phase
+  3.2 (fixing score_players()'s hard-clip normalization, noted as
+  already planned/separate) proceeds independently of this finding.
+
+## Phase 3.1.6 — Feature ablation (does min_cv_pitch alone suffice?)
+- Confirmed feature column order against features_hybrid.csv headers
+  before indexing — matched the assumed order exactly (0=
+  peak_yaw_delta ... 5=min_cv_pitch, 6=cv_yaw_std ... 8=
+  fire_on_target_rate ... 10=engagement_firing_rate). No correction
+  needed.
+- Config A (1 feature, min_cv_pitch, IF only, n_estimators=300): AUC
+  0.5791.
+- Config B (2 features, +cv_yaw_std, IF only): AUC 0.5640 — LOWER
+  than Config A. Adding the 2nd-ranked TreeExplainer feature alone
+  hurt AUC by -0.0151; the effect is non-monotonic, not just
+  diminishing.
+- Config C (4 features: min_cv_pitch, cv_yaw_std, peak_pitch_delta,
+  fire_on_target_rate; IF n_estimators=300 + Autoencoder 4→3→2→3→4,
+  lr=1e-3, seed=7, single exploratory run, untuned 50/50 ensemble):
+  IF-only 0.5924, AE-only 0.5582, ensemble 0.5922 — ensemble roughly
+  matches IF-only here, AE contributes essentially nothing at this
+  feature count (consistent with a 2-dim bottleneck on 4 features
+  being too tight to learn much structure).
+- Config D (11 features, production ensemble, reference, NOT
+  retrained): AUC 0.6033 (Phase 2.3).
+- min_cv_pitch alone captures 96.0% of the full 11-feature model's
+  AUC-ROC (0.5791 / 0.6033). Returns diminish most clearly between 4
+  and 11 features (+0.0111, the smallest marginal AUC gain of the
+  three steps), though the 1→2 feature step actually regressed
+  (-0.0151) before recovering by 4 features (+0.0281 from 2→4).
+- Score correlation (Config A's 1-feature scores vs the full
+  11-feature ensemble scores on X_test): 0.6405 — LOWER than the 0.8
+  threshold. Interpretation: even though the AUCs are close, the
+  other 10 features meaningfully change WHICH players get flagged,
+  not just by how much — AUC-ROC similarity alone understates how
+  different the two models' actual flagging behavior is.
+- Decision: KEEP all 11 features for production. Despite min_cv_pitch
+  capturing 96% of the AUC alone, (a) the 1-feature model's flagged
+  set only moderately correlates (0.64) with the full model's, meaning
+  a large fraction of who gets flagged would change under a reduced
+  model — an unacceptable behavior shift for a detection system
+  without a matching investigation into which set is more correct; (b)
+  the B/C configs show non-monotonic, fragile behavior when features
+  are dropped in isolation, indicating min_cv_pitch's marginal
+  dominance doesn't decompose cleanly into "add the next best feature,
+  get an incremental gain" — the remaining 10 features interact in
+  ways this bounded ablation doesn't fully explain. A feature-reduced
+  production model is not justified by this exploratory result.
+
+## Phase 3.2 — Fixed score saturation + established production threshold
+- Bug found: hard clipping (clip((raw-p1)/(p99-p1), 0, 1)) saturated
+  extreme scores to exactly 0.0/1.0, making true positives and false
+  positives indistinguishable at the ceiling (found in Phase 3.1: 2 of
+  3 "flagged" players at score 1.0 were legit).
+- Fixed via smooth sigmoid transform in backend/core/inference.py:
+  normalized = 1/(1+exp(-(raw-median)/scale)), with median = 50th
+  percentile of raw scores on the full 2400-row X_test and
+  scale = (p99-p1)/4 (existing Phase 2.3 percentile bounds, kept
+  alongside the new fields in scoring_config.json: if_score_median=
+  -0.06935, if_score_scale=0.05119, ae_score_median=0.10994,
+  ae_score_scale=0.46700). AUC-ROC unchanged: 0.6035 vs the prior
+  0.6033 (transform is monotonic, difference is noise-level).
+- ensemble_score distribution on full X_test: min=0.3886, max=0.9920,
+  mean=0.5310, std=0.1061, p50=0.5043, p90=0.6569, p95=0.7425,
+  p99=0.9337. Zero ensemble_score values are exactly 0.0000 or
+  1.0000. One remaining edge case, documented rather than hidden: the
+  ae_score COMPONENT (not ensemble_score) hits exactly 1.0 for 4/2400
+  players — this is float32 precision underflow on extreme AE
+  reconstruction-error outliers (raw errors up to ~27 vs a median of
+  ~0.11, z-scores >20, where exp(-z) underflows float32's ~7-digit
+  precision), not a design clip. It never affects ensemble_score
+  because the 0.3 IF weight is never saturated.
+- Re-checked the 3 Phase 3.1 players — no longer tied at an identical
+  ceiling: player 7237 (legit) ensemble_score=0.9876, player 356
+  (CHEATER) ensemble_score=0.9806, player 6363 (legit)
+  ensemble_score=0.9862. All three remain high-scoring (correctly —
+  they were genuine outliers) but are now distinguishable from each
+  other.
+- Threshold selection on the full 2400-player test set
+  (backend/notebooks/06_threshold_selection.ipynb): F1-optimal
+  threshold = 0.50, precision 0.2090, recall 0.6475, F1 0.3160
+  (1239 flagged, 980 false positives). No threshold in the coarse
+  0.05-step sweep reached precision >= 0.40 (topped out at 0.3784 at
+  threshold=0.90); the finer precision_recall_curve found it at
+  threshold=0.8275, precision 0.4000, recall 0.0700, F1 0.1191 (70
+  flagged, 42 false positives) — costs 0.5775 recall to gain that
+  precision. No local "Doc 01" file exists in the repo to update
+  in-place; the real, data-derived threshold (0.50, not the
+  previously-assumed 0.75) is persisted as flag_threshold in
+  scoring_config.json for Phase 4 to read, along with
+  flag_threshold_precision/recall/f1 and
+  flag_threshold_high_precision_alt (0.8275) for the alternative.
+- Feature ablation (Phase 3.1.6) confirmed all 11 features remain in
+  production — min_cv_pitch dominates AUC contribution (96% alone)
+  but score correlation with the full model is only 0.64, meaning the
+  other 10 features meaningfully change which specific players are
+  flagged, not just aggregate ranking quality.
+- Status: production scoring (smooth normalization) + threshold
+  (0.50 default, 0.8275 high-precision alternative) finalized for
+  Phase 4. Both AUC-ROC (0.6033) and precision at F1-optimal (0.21)
+  are modest — Phase 4 should present scores/flags as investigative
+  signal for human review, not automated bans.
+
+## Phase 3.3 — Product reframing: ranked triage, not binary flagging
+- Finding: at the F1-optimal threshold (0.5), precision is only 0.209
+  (4 of 5 flagged players are false positives). The high-precision
+  alternative (threshold 0.8275) only reaches 0.40 precision at 0.07
+  recall. Neither is acceptable for a binary "flagged = accusation"
+  system.
+- Root cause (confirmed, not assumed): NOT poor training (clean loss
+  curves, validated grid search, 5-seed stability check), NOT poor
+  model choice (5 different model types all converged to the same
+  0.53-0.67 band), NOT poor architecture (correctly-sized autoencoder
+  made no material difference). The actual cause is the dataset
+  itself: (1) label noise, measured directly via cleanlab at +0.017
+  AUC impact — small, not primary; (2) missing information — the
+  dataset only captures 5 aim-behavior channels, with no wallhack
+  signal, no movement/positioning data, and no per-engagement
+  indication of when a cheat was actually active (the label applies
+  uniformly across all 30 engagements even though the cheat likely
+  wasn't active in most of them).
+- Decision: reframe ARGUS's product behavior from "binary flag" to
+  "ranked suspicion score for human review" — admin reviews their
+  top-N most anomalous players, not everyone above a threshold. This
+  requires no model changes, only UI/framing changes in Phase 4 and
+  updates to Doc 01 (PRD) — noted as pending, Doc 01 is a docx
+  artifact outside the repo and needs manual regeneration.
+- Status: this is the FINAL product framing carried into Phase 4.
+
+## Future Work (V2 / V3 ideas — not in current scope)
+- V2 (recommended direction): retrain on a larger, richer labelled
+  dataset that includes wallhack-relevant signals (rotation toward
+  not-yet-visible enemies), movement/positioning data, and ideally
+  per-engagement cheat-activity labels rather than per-player labels
+  applied uniformly. Directly targets the diagnosed bottleneck
+  (missing information), unlike further modeling iteration on the
+  current dataset.
+- V3 (considered, NOT recommended as scoped): extracting aim/timing
+  telemetry from raw gameplay video via OpenCV. Rejected: CS2 is a
+  first-person 3D game, and reconstructing precise aim angles and
+  timing from 2D video frames is a much harder, largely unsolved CV
+  research problem — and unnecessary, since .dem files already
+  provide this exact data as structured, ground-truth telemetry. If
+  computer vision work is wanted for its own sake, a more tractable
+  direction would be 2D minimap or HUD/scoreboard analysis, not full
+  3D scene reconstruction from gameplay footage.
+- Alternative near-term extension (more achievable than V3): parse
+  raw .dem files directly (awpy/demoparser2 — "Path B" from initial
+  project scoping) to engineer features from scratch rather than
+  relying on a pre-processed Kaggle dataset. Legitimate, bounded
+  extension; not attempted in the current build due to time/scope.

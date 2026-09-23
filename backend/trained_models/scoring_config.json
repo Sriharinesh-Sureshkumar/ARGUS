@@ -3,5 +3,14 @@
   "if_score_p99": 0.08299678789178934,
   "ae_score_p1": 0.015224658520892262,
   "ae_score_p99": 1.8832051980495212,
-  "ensemble_weight_if": 0.3
+  "if_score_median": -0.06934903217390165,
+  "if_score_scale": 0.05119397718066487,
+  "ae_score_median": 0.1099381297826767,
+  "ae_score_scale": 0.4669951348821573,
+  "ensemble_weight_if": 0.3,
+  "flag_threshold": 0.5,
+  "flag_threshold_precision": 0.20903954802259886,
+  "flag_threshold_recall": 0.6475,
+  "flag_threshold_f1": 0.3160463697376449,
+  "flag_threshold_high_precision_alt": 0.8274662989865251
 }
