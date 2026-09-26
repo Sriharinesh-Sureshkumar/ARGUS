@@ -22,6 +22,7 @@ doesn't need the original CSV again.
 """
 
 import json
+import logging
 import time
 from io import BytesIO
 
@@ -36,6 +37,8 @@ from core.model import FEATURE_ORDER
 from db import crud
 from db.session import get_db
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 REQUIRED_COLUMNS = ["player_id", *FEATURE_ORDER]
@@ -45,7 +48,13 @@ _TRACEABILITY_SUFFIXES = ("_source_engagement", "_source_tick", "_real_time_seco
 @router.post("/analyze", response_model=AnalysisResponse)
 async def analyze(request: Request, file: UploadFile, db: Session = Depends(get_db)):
     start_time = time.time()
+    # Phase 4.1.6 diagnostics: named step durations (perf_counter
+    # seconds); score_players/cluster_and_embed fill in their own
+    # score.*/cluster.* sub-steps.
+    timings: dict[str, float] = {}
+    t_total = time.perf_counter()
 
+    t = time.perf_counter()
     raw = await file.read()
     try:
         df = pd.read_csv(BytesIO(raw))
@@ -63,12 +72,20 @@ async def analyze(request: Request, file: UploadFile, db: Session = Depends(get_
                 f"-- raw .dem telemetry (Path B) is not supported here."
             ),
         )
+    timings["route.read_parse_csv"] = time.perf_counter() - t
 
     models = request.app.state.models
     flag_threshold = models["scoring_config"].get("flag_threshold", 0.5)
 
-    scores = score_players(df, models=models)
-    clustered = cluster_and_embed(df)
+    t = time.perf_counter()
+    scores = score_players(df, models=models, timings=timings)
+    timings["route.score_players_total"] = time.perf_counter() - t
+
+    t = time.perf_counter()
+    clustered = cluster_and_embed(df, timings=timings)
+    timings["route.cluster_and_embed_total"] = time.perf_counter() - t
+
+    t = time.perf_counter()
 
     combined = df.copy()
     combined["ensemble_score"] = scores["ensemble_score"].values
@@ -114,6 +131,9 @@ async def analyze(request: Request, file: UploadFile, db: Session = Depends(get_
             }
         )
 
+    timings["route.combine_rank_build_rows"] = time.perf_counter() - t
+
+    t = time.perf_counter()
     analysis = crud.create_analysis(
         db,
         player_results,
@@ -121,12 +141,23 @@ async def analyze(request: Request, file: UploadFile, db: Session = Depends(get_
         flag_threshold=flag_threshold,
         model_version=getattr(request.app.state, "model_version", "v1.0"),
     )
+    timings["route.db_create_analysis"] = time.perf_counter() - t
+
+    # Per-step breakdown only emitted at LOG_LEVEL=DEBUG (Phase 4.1.8).
+    total = time.perf_counter() - t_total
+    logger.debug(
+        "[analyze] timing breakdown (total %.4fs):\n%s",
+        total,
+        "\n".join(f"  {name:<36} {dur:>9.4f}s  {100 * dur / total:>6.2f}%" for name, dur in timings.items()),
+    )
 
     elapsed = time.time() - start_time
     n = len(player_results)
-    print(
-        f"[analyze] processed {n} players in {elapsed:.2f}s "
-        f"({elapsed / max(n, 1):.2f}s/player) -- scoring + clustering only, no SHAP"
+    logger.info(
+        "[analyze] processed %d players in %.2fs (%.2fs/player) -- scoring + clustering only, no SHAP",
+        n,
+        elapsed,
+        elapsed / max(n, 1),
     )
 
     return AnalysisResponse(

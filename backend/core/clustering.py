@@ -9,6 +9,7 @@ request.
 """
 
 import json
+import time
 from pathlib import Path
 
 import joblib
@@ -63,14 +64,18 @@ def load_clustering_artifacts() -> dict:
     }
 
 
-def cluster_and_embed(features_df: pd.DataFrame, scaled: bool = False) -> pd.DataFrame:
+def cluster_and_embed(features_df: pd.DataFrame, scaled: bool = False, timings: dict | None = None) -> pd.DataFrame:
     """Assign cluster_id, archetype_name, umap_x, umap_y to each row.
 
     features_df: DataFrame containing (at least) the 11 FEATURE_ORDER
     columns, raw/unscaled unless scaled=True.
     Returns a COPY of features_df with cluster_id, archetype_name,
     umap_x, umap_y columns added (index preserved).
+    timings: optional dict; if given, per-step durations (seconds) are
+    written into it under cluster.* keys (Phase 4.1.6 diagnostics).
     """
+    if timings is None:
+        timings = {}
     artifacts = load_clustering_artifacts()
     kmeans = artifacts["kmeans"]
     umap_model = artifacts["umap_model"]
@@ -79,14 +84,23 @@ def cluster_and_embed(features_df: pd.DataFrame, scaled: bool = False) -> pd.Dat
     scaler = artifacts["scaler"]
 
     X = features_df[FEATURE_ORDER].values
+    t = time.perf_counter()
     X_scaled = X if scaled else scaler.transform(X)
+    timings["cluster.scaler_transform"] = time.perf_counter() - t
 
+    t = time.perf_counter()
     with torch.no_grad():
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
         latent = autoencoder.encode(X_tensor).numpy()
+    timings["cluster.ae_encode"] = time.perf_counter() - t
 
+    t = time.perf_counter()
     cluster_id = kmeans.predict(latent)
+    timings["cluster.kmeans_predict"] = time.perf_counter() - t
+
+    t = time.perf_counter()
     umap_coords = umap_model.transform(latent)
+    timings["cluster.umap_transform"] = time.perf_counter() - t
 
     result = features_df.copy()
     result["cluster_id"] = cluster_id

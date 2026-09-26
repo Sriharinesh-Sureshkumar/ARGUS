@@ -17,6 +17,7 @@ outlier's sigmoid to 1.0 — a numerical floor, not a design clip).
 """
 
 import json
+import time
 from pathlib import Path
 
 import joblib
@@ -66,16 +67,21 @@ def _normalize(raw: np.ndarray, median: float, scale: float) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-(raw - median) / scale))
 
 
-def score_players(features, models: dict | None = None) -> pd.DataFrame:
+def score_players(features, models: dict | None = None, timings: dict | None = None) -> pd.DataFrame:
     """Score players with the production IF + AE ensemble.
 
     features: DataFrame (columns must include FEATURE_ORDER, any order/
     extras allowed) or a raw (n, 11) array already in FEATURE_ORDER.
     models: pre-loaded dict from load_models(); loaded fresh if omitted.
 
+    timings: optional dict; if given, per-step durations (seconds) are
+    written into it under score.* keys (Phase 4.1.6 diagnostics).
+
     Returns a DataFrame (index preserved from a DataFrame input) with
     if_score_raw, if_score, ae_score_raw, ae_score, ensemble_score.
     """
+    if timings is None:
+        timings = {}
     if models is None:
         models = load_models()
 
@@ -91,15 +97,28 @@ def score_players(features, models: dict | None = None) -> pd.DataFrame:
         X = np.asarray(features)
         index = None
 
+    t = time.perf_counter()
     if_score_raw = -iso_forest.decision_function(X)
-    if_score = _normalize(if_score_raw, scoring_config["if_score_median"], scoring_config["if_score_scale"])
+    timings["score.if_decision_function"] = time.perf_counter() - t
 
+    t = time.perf_counter()
+    if_score = _normalize(if_score_raw, scoring_config["if_score_median"], scoring_config["if_score_scale"])
+    timings["score.if_sigmoid_normalize"] = time.perf_counter() - t
+
+    t = time.perf_counter()
     X_scaled = scaler.transform(X)
+    timings["score.scaler_transform"] = time.perf_counter() - t
+
+    t = time.perf_counter()
     with torch.no_grad():
         X_tensor = torch.tensor(X_scaled, dtype=torch.float32)
         reconstruction = autoencoder(X_tensor)
         ae_score_raw = torch.mean((reconstruction - X_tensor) ** 2, dim=1).numpy()
+    timings["score.ae_forward_pass"] = time.perf_counter() - t
+
+    t = time.perf_counter()
     ae_score = _normalize(ae_score_raw, scoring_config["ae_score_median"], scoring_config["ae_score_scale"])
+    timings["score.ae_sigmoid_normalize"] = time.perf_counter() - t
 
     w = scoring_config["ensemble_weight_if"]
     ensemble_score = w * if_score + (1 - w) * ae_score

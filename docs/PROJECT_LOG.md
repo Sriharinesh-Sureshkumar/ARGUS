@@ -589,6 +589,12 @@ existing history.*
   (0.73s/player) — down from 20.02s (2.50s/player) in Phase 4.1, a
   ~3.4x speedup. Remaining cost is scoring (IF + AE) and clustering
   (encode -> kmeans.predict -> umap.transform), not SHAP.
+  - CORRECTION (see Phase 4.1.7): the attribution above is wrong.
+    This 5.82s figure was never profiled. Phase 4.1.6 profiling
+    showed ~97% of it was a one-time ~6.5s UMAP/Numba JIT compilation
+    cost on the first umap_model.transform() call per server process
+    -- not a per-player cost, and not scoring. Warm steady-state cost
+    is ~0.05s for 8 players (~0.006s/player).
 - First GET /player/{id} call (cache miss): 2.13s (server-logged:
   "SHAP computed in 2.13s") — consistent with the per-player SHAP
   cost measured throughout Phase 3.1/4.1.
@@ -616,3 +622,57 @@ existing history.*
   must handle top_shap_feature being null in the initial results
   list, and show a brief (~2s) loading state on the player detail
   page for the first view of each player.
+
+## Phase 4.1.7 — Fixed UMAP cold-start cost (startup warmup)
+- Correction to Phase 4.1.5: the "~0.73s/player" clustering cost
+  was misdiagnosed — profiling (Phase 4.1.6) found it was actually
+  a one-time ~6.5s UMAP/Numba JIT compilation cost per server
+  process, not a per-player cost. Real steady-state cost is
+  ~0.006s/player.
+  - Phase 4.1.6 profiling (perf_counter timings dict threaded through
+    score_players()/cluster_and_embed() via an optional timings=
+    argument, printed per request by /analyze): cold first request
+    6.68s total, of which umap_model.transform() was 6.52s (97.6%);
+    the same batch warm was 0.046s total, UMAP 0.007s. Every step
+    (IF decision_function, AE forward pass, sigmoid normalization,
+    scaler.transform, AE .encode(), kmeans.predict(),
+    umap.transform()) was already a single batch call — no per-row
+    loops in the model path.
+- Fix: server now runs a dummy warmup request through the full
+  scoring+clustering pipeline at startup, paying the JIT cost
+  before any real request arrives.
+  - backend/main.py lifespan: after all models/artifacts load, one
+    all-zeros row (1 x 11, FEATURE_ORDER columns) is run through
+    score_players() and cluster_and_embed(); result discarded.
+    Startup log: "[startup] scoring + clustering warmup took 6.13s".
+- Confirmed: first real request after startup now completes in
+  warm-speed range (~0.05s for 8 players), not cold (~6.5s).
+  - Measured: 0.058s server-side (umap_model.transform() 0.007s),
+    0.27s full HTTP round trip, on a freshly started server.
+- Test fixture backend/tests/fixtures/test_8_players.csv added for
+  future benchmarking.
+  - 8 rows sampled from features_hybrid.csv (4 label=1, 4 label=0,
+    random_state=0), label column dropped, player_id p0..p7 added.
+    Note: rebuilt in Phase 4.1.6 — the original Phase 4.1 test CSV
+    was not preserved, so this is not the identical batch.
+- Status: no remaining performance concern for Phase 4.2 (React)
+  loading states — a brief, constant-time loading indicator is
+  sufficient regardless of batch size; no special handling needed
+  for large uploads.
+- Follow-up (Phase 4.1.8): Timing instrumentation now gated behind
+  LOG_LEVEL=DEBUG using Python's logging module. Silent at INFO/
+  WARNING (production default), full breakdown available when needed
+  for future debugging.
+  - backend/main.py configures the root logger from the LOG_LEVEL env
+    var (TRD Doc 02 convention; default INFO). The /analyze per-step
+    breakdown is a logger.debug() call. The startup warmup time and
+    the one-line "[analyze] processed N players" summary are
+    logger.info(), so they show at INFO and are silent at WARNING.
+  - The "numba" logger is pinned to WARNING: at DEBUG, Numba otherwise
+    logs every JIT compilation step (~81k lines, 9.6MB, during the
+    startup UMAP warmup), burying ARGUS's own debug output.
+  - Verified against a live server with
+    backend/tests/fixtures/test_8_players.csv at DEBUG, INFO, WARNING
+    and LOG_LEVEL unset: the breakdown appears only at DEBUG; all four
+    runs returned HTTP 200 with identical results (8 players, 4
+    flagged, rank 1 = p1, ensemble_score 0.6769).
