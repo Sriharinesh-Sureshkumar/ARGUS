@@ -520,3 +520,99 @@ existing history.*
 - umap-learn added as a project dependency (`uv add umap-learn`).
 - Status: kmeans.pkl, umap_model.pkl, archetype_names.json ready for
   Phase 4 FastAPI integration.
+
+## Phase 4.1 — FastAPI backend (DB, CRUD, schemas, 6 endpoints)
+- Product framing: rank-based triage, is_flagged as secondary
+  indicator only (per Phase 3.3 decision) — every player-facing
+  schema leads with `rank` (1 = most suspicious); `is_flagged`
+  (scoring_config.json's flag_threshold=0.5) is included but
+  documented as secondary.
+- CSV input format: player_id + the 11 hybrid feature columns
+  (pre-computed, Path A scope — Path B raw .dem parsing remains a
+  documented future upgrade). Verified: uploading a CSV missing
+  columns returns HTTP 422 with the exact missing-column list.
+- New core modules: backend/core/explainer.py (ports the Phase 3.1
+  SHAP KernelExplainer + FEATURE_DESCRIPTIONS + engagement/tick
+  traceability logic; background dataset + explainer built once,
+  cached module-level) and backend/core/clustering.py (ports the
+  Phase 3.4 scale -> encode() -> kmeans.predict() -> umap.transform()
+  pipeline; artifacts cached module-level).
+  New dependencies added: fastapi, uvicorn[standard], sqlalchemy,
+  python-multipart (`uv add`).
+- DB: backend/db/models.py (Analysis -> Player -> SHAPValue, cascade
+  delete), backend/db/crud.py, backend/db/session.py (engine/
+  SessionLocal — kept in its own module rather than main.py as
+  literally specified, to avoid a main.py <-> routes circular import;
+  main.py still owns the Base.metadata.create_all() startup call).
+  argus.db added to .gitignore (runtime artifact).
+- All 6 endpoints implemented and manually verified against a live
+  server (uv run uvicorn main:app --app-dir backend) with an 8-player
+  test CSV built from features_hybrid.csv:
+  - POST /api/v1/analyze: 200 OK, 8 players scored/ranked/clustered/
+    explained, 5/8 flagged at threshold 0.5. Also verified the 422
+    path (CSV missing 10 of 11 feature columns -> clear error).
+  - GET /api/v1/player/{id}?analysis_id=: 200 OK, full SHAP
+    breakdown with plain-language descriptions and engagement/tick
+    traceability text for peak_yaw_delta. Verified 404 for an unknown
+    player_id.
+  - GET /api/v1/history: 200 OK, newest-first list.
+  - GET /api/v1/clusters?analysis_id= (and with the param omitted,
+    defaulting to the most recent analysis): 200 OK both ways,
+    3 archetypes + 8 per-player UMAP points returned.
+  - DELETE /api/v1/history/{id}: 200 OK, then verified via a direct
+    DB query that all rows in analyses/players/shap_values dropped to
+    0 (cascade delete confirmed working, not just the Analysis row).
+    Re-deleting the same id correctly returned 404.
+  - GET /api/v1/health: 200 OK, {status: "ok", models_loaded: true,
+    db_connected: true, model_version: "v1.0"}.
+- Analysis processing time for the 8-player test batch: 20.02s total
+  (2.50s/player) — dominated by shap.KernelExplainer.shap_values()
+  being called once per player (Cell-4-style, ~1.7-2.5s/player,
+  consistent with Phase 3.1's SHAP timing). Acceptable for a small
+  admin-driven batch upload; would need batching/async work before a
+  much larger CSV (hundreds of players) is practical.
+- Status: backend ready for Phase 4.2 (React frontend).
+
+## Phase 4.1.5 — Lazy SHAP computation (performance fix)
+- Problem: eager SHAP on every player during /analyze made upload
+  slow (~2.5s/player, unacceptable for realistic match sizes — an
+  8-player test batch took 20.02s, a 20-player match would be ~50s).
+- Fix: SHAP now computed on-demand, first time GET /player/{id} is
+  called for that player, then cached in SHAPValue rows for
+  subsequent requests. backend/api/routes/analyze.py no longer
+  imports or calls explain_player() at all; backend/db/crud.py's new
+  get_or_compute_shap(db, player_row_id) checks for existing
+  SHAPValue rows first (cache hit, DB read only) and only calls
+  explain_player() + writes 11 SHAPValue rows + backfills the
+  Player row's top_shap_feature/top_shap_value on a cache miss.
+- New /analyze processing time (8 players, no SHAP): 5.82s total
+  (0.73s/player) — down from 20.02s (2.50s/player) in Phase 4.1, a
+  ~3.4x speedup. Remaining cost is scoring (IF + AE) and clustering
+  (encode -> kmeans.predict -> umap.transform), not SHAP.
+- First GET /player/{id} call (cache miss): 2.13s (server-logged:
+  "SHAP computed in 2.13s") — consistent with the per-player SHAP
+  cost measured throughout Phase 3.1/4.1.
+- Second GET /player/{id} call, same player (cache hit): 0.00s
+  server-side compute (0.045s full HTTP round trip) — server-logged
+  "SHAP cache hit in 0.00s". Verified the returned shap_values are
+  byte-identical between the two calls.
+- Verified directly against the DB: the viewed player's
+  top_shap_feature/top_shap_value were correctly backfilled (were
+  None immediately after upload) and 11 SHAPValue rows exist; an
+  unviewed player in the same analysis still has top_shap_feature=
+  None and 0 SHAPValue rows, confirming the laziness is genuinely
+  per-player, not batch-wide.
+- Storage approach for feature reconstruction: a single JSON string
+  column (Player.raw_features_json), not 11 individual float columns.
+  Chosen because this data is opaque storage — read back only as a
+  whole dict for explain_player(), never queried or filtered by
+  individual feature value — so normalizing it into columns would add
+  schema complexity for no query benefit. It also transparently
+  carries along any optional traceability columns present in the
+  uploaded CSV (peak_yaw_delta/min_cv_yaw source_engagement/
+  source_tick/real_time_seconds) without a fixed schema needing to
+  anticipate them.
+- Status: backend ready for Phase 4.2 (React frontend) — frontend
+  must handle top_shap_feature being null in the initial results
+  list, and show a brief (~2s) loading state on the player detail
+  page for the first view of each player.
