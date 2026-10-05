@@ -750,3 +750,46 @@ existing history.*
   terminal display only.
 - Follow-up: blank/missing player_id values (empty, NaN, whitespace-only) now return 422 invalid_player_id with the count and up to 5 data row numbers (1 = first row after the header); checked before invalid_values and duplicate_player_ids.
 - Verified with one blank id (422, row [3]), two blank ids (422, rows [1, 6]) and the 8-player fixture (200, rank/score mapping identical to the pre-change snapshot).
+
+## Phase 4.2.0 — React frontend scaffold
+- Decisions: plain JavaScript (JSX, no TypeScript) since the owner is
+  learning React; Tailwind CSS v4 for styling; React Router for
+  routing. No UI kit, state library or axios yet.
+- Scaffolded frontend/ with the official Vite React JavaScript
+  template (create-vite 9.2.1, non-interactive). Versions: Node
+  24.16.0, npm 11.13.0, Vite 8.3.2, React 19.3.0, react-router-dom
+  7.18.4, tailwindcss + @tailwindcss/vite 4.3.3 (official Vite plugin
+  setup), @fontsource/inter and @fontsource/jetbrains-mono 5.3.0
+  (self-hosted). The template's linter is Oxlint (npm run lint).
+- Dev server pinned to port 5173 with strictPort: true — backend CORS
+  allows only http://localhost:5173, so Vite must fail ("Port 5173 is
+  already in use") rather than silently move to 5174. Verified.
+- Backend base URL: VITE_API_BASE_URL, default
+  http://localhost:8000/api/v1 (backend starts with uvicorn's default
+  port 8000; no --port in this repo). Verified /health returns
+  access-control-allow-origin: http://localhost:5173 for that Origin.
+- Route table:
+  | Path                                   | Page             |
+  |----------------------------------------|------------------|
+  | /                                      | UploadPage       |
+  | /results/:analysisId                   | ResultsPage      |
+  | /results/:analysisId/player/:playerId  | PlayerDetailPage |
+  | /clusters                              | ClustersPage     |
+  | /history                               | HistoryPage      |
+  | * (anything else)                      | NotFoundPage     |
+  All pages are stubs (heading + route params) inside a shared Layout
+  with a Navbar (Upload / History / Clusters, active link
+  highlighted, backend status dot from GET /health on mount).
+- Design tokens live in ONE file: frontend/src/styles/tokens.css
+  (Tailwind v4 @theme). Tailwind's default palette is removed so only
+  token classes work (bg-base, bg-surface, text-accent-green, ...).
+  Doc 04 (UI/UX Brief) is not in the repo; the brief's known values
+  were used for base, surface and the four accents.
+- TEMP tokens (replace from Doc 04): --color-content #E5E7EB (main
+  text), --color-content-muted #9CA3AF (secondary text, "checking"
+  dot), --color-line #26262F (borders).
+- src/api/client.js normalizeError() maps every failure to
+  {status, code, message, fix}: our {code, message, fix} errors,
+  FastAPI list-style 422s (code validation_error), backend
+  unreachable (code network_error), and non-JSON bodies (code
+  unexpected_response).

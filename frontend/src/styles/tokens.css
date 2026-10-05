@@ -1,0 +1,39 @@
+/*
+  ARGUS design tokens -- the ONLY place colours and fonts are defined.
+
+  Tailwind v4 turns every variable in @theme into utility classes, e.g.
+  --color-surface -> bg-surface / text-surface / border-surface.
+  Components must use those class names, never raw hex values, so the
+  palette can be changed here in one place.
+
+  Source: Doc 04 (UI/UX Brief) is not in the repo yet, so these are the
+  known brief values. Anything marked TEMP was added to fill a gap and
+  must be replaced from Doc 04.
+*/
+
+@theme {
+  /* Drop Tailwind's built-in palette (red-500, gray-900, ...) so only
+     ARGUS tokens exist -- a stray "bg-gray-800" then simply doesn't work
+     instead of quietly drifting off-palette. */
+  --color-*: initial;
+
+  /* Backgrounds (Doc 04 brief) */
+  --color-base: #0A0A0F;    /* page background */
+  --color-surface: #13131A; /* cards, navbar */
+
+  /* Accents (Doc 04 brief) */
+  --color-accent-green: #6EE7B7;
+  --color-accent-indigo: #818CF8;
+  --color-accent-amber: #FBBF24;
+  --color-accent-red: #F87171;
+
+  /* Neutrals */
+  --color-content: #E5E7EB;       /* TEMP: replace from Doc 04 -- main text */
+  --color-content-muted: #9CA3AF; /* TEMP: replace from Doc 04 -- secondary text, "checking" dot */
+  --color-line: #26262F;          /* TEMP: replace from Doc 04 -- borders, dividers */
+
+  /* Fonts: Inter for UI text, JetBrains Mono for numbers/scores/ids.
+     The font files are self-hosted via @fontsource (imported in main.jsx). */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}

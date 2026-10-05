@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+/* Dark theme only: tell the browser so scrollbars and form controls
+   render dark too. */
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-base text-content font-sans antialiased;
+}
