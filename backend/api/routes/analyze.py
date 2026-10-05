@@ -19,6 +19,12 @@ for that player (see db.crud.get_or_compute_shap). Each player's raw
 11 feature values (+ any traceability columns) are stashed as
 raw_features_json on the Player row so that later lazy computation
 doesn't need the original CSV again.
+
+Phase 4.1.9: every input check (file type, size, parseability, row
+count, columns, feature values, duplicate ids) runs up front in
+_read_and_validate_csv() and fails with a 4xx in the standard
+{"code", "message", "fix"} shape (api/errors.py) before any model runs.
+Limits come from core/config.py.
 """
 
 import json
@@ -26,12 +32,15 @@ import logging
 import time
 from io import BytesIO
 
+import numpy as np
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, Request, UploadFile
 from sqlalchemy.orm import Session
 
+from api.errors import api_error
 from api.schemas import AnalysisResponse, PlayerSummary
 from core.clustering import cluster_and_embed
+from core.config import MAX_ROWS, MAX_UPLOAD_BYTES
 from core.inference import score_players
 from core.model import FEATURE_ORDER
 from db import crud
@@ -43,6 +52,125 @@ router = APIRouter()
 
 REQUIRED_COLUMNS = ["player_id", *FEATURE_ORDER]
 _TRACEABILITY_SUFFIXES = ("_source_engagement", "_source_tick", "_real_time_seconds")
+_MAX_EXAMPLES = 5
+_CSV_FORMAT_FIX = (
+    f"Upload a comma-separated .csv with a header row containing 'player_id' plus the "
+    f"11 feature columns: {', '.join(FEATURE_ORDER)}."
+)
+
+
+async def _read_and_validate_csv(file: UploadFile) -> pd.DataFrame:
+    """Read the upload and run every input check (Phase 4.1.9), in order.
+
+    Every rejection is a 4xx api_error -- bad input must never reach
+    the models and surface as a 500. Returns the parsed DataFrame with
+    the 11 feature columns guaranteed finite numeric.
+    """
+    filename = file.filename or ""
+    if not filename.lower().endswith(".csv"):
+        raise api_error(
+            422,
+            "wrong_file_type",
+            f"'{filename or '(no filename)'}' is not a .csv file. ARGUS accepts pre-computed "
+            f"feature CSVs only (Path A); raw .dem demos are not supported.",
+            _CSV_FORMAT_FIX,
+        )
+
+    # Read at most one byte past the limit: enough to detect oversize
+    # without loading an arbitrarily large upload into memory.
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        limit_mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+        raise api_error(
+            413,
+            "file_too_large",
+            f"'{filename}' is larger than the {limit_mb:g} MB upload limit.",
+            f"Split the file into smaller CSVs of at most {MAX_ROWS} players each and upload them separately.",
+        )
+
+    try:
+        df = pd.read_csv(BytesIO(raw))
+    except Exception as e:
+        logger.info("[analyze] unreadable CSV %r: %s", filename, e)
+        raise api_error(
+            422,
+            "unreadable_csv",
+            f"'{filename}' is empty or could not be read as a CSV (it must be UTF-8 comma-separated text).",
+            _CSV_FORMAT_FIX,
+        ) from e
+
+    if len(df) == 0:
+        raise api_error(
+            422,
+            "no_rows",
+            f"'{filename}' has a header row but no player rows.",
+            "Add at least one row of player data below the header.",
+        )
+
+    if len(df) > MAX_ROWS:
+        raise api_error(
+            422,
+            "too_many_rows",
+            f"'{filename}' has {len(df)} player rows; the limit is {MAX_ROWS} per upload.",
+            f"Split the file into CSVs of at most {MAX_ROWS} players each and upload them separately.",
+        )
+
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        raise api_error(
+            422,
+            "missing_columns",
+            f"CSV is missing required column(s): {missing}. Expected a "
+            f"'player_id' column plus the 11 hybrid feature columns: "
+            f"{FEATURE_ORDER}. This is Path A scope (pre-computed features) "
+            f"-- raw .dem telemetry (Path B) is not supported here.",
+            f"Add the missing column(s) {missing} to the header row (names are case-sensitive).",
+        )
+
+    # Checked before invalid_values so its (player_id, column) examples
+    # never show a blank id as "nan".
+    blank_ids = (df["player_id"].isna() | df["player_id"].astype(str).str.strip().eq("")).to_numpy()
+    if blank_ids.any():
+        row_numbers = (np.flatnonzero(blank_ids) + 1).tolist()
+        raise api_error(
+            422,
+            "invalid_player_id",
+            f"{len(row_numbers)} row(s) have a blank or missing player_id. "
+            f"Data row number(s) (1 = first row after the header): {row_numbers[:_MAX_EXAMPLES]}.",
+            "Give every row a non-empty player_id, or remove those rows.",
+        )
+
+    player_ids = df["player_id"].astype(str)
+
+    # NaN, blanks, non-numeric text and +/-inf all count as invalid:
+    # the IF/AE/KMeans pipeline needs finite floats.
+    features = df[FEATURE_ORDER].apply(pd.to_numeric, errors="coerce")
+    invalid = (features.isna() | features.isin([np.inf, -np.inf])).to_numpy()
+    if invalid.any():
+        rows, cols = np.nonzero(invalid)  # row-major: examples follow file order
+        bad_columns = [c for j, c in enumerate(FEATURE_ORDER) if invalid[:, j].any()]
+        examples = [(player_ids.iat[i], FEATURE_ORDER[j]) for i, j in zip(rows[:_MAX_EXAMPLES], cols[:_MAX_EXAMPLES])]
+        raise api_error(
+            422,
+            "invalid_values",
+            f"{len(rows)} cell(s) are empty, non-numeric or infinite in column(s) {bad_columns}. "
+            f"Examples as (player_id, column): {examples}.",
+            "Fill every feature cell with a finite number (no blanks, NaN, text or inf), "
+            "or remove the affected players.",
+        )
+    df[FEATURE_ORDER] = features
+
+    duplicated = player_ids[player_ids.duplicated(keep=False)].unique()
+    if len(duplicated):
+        raise api_error(
+            422,
+            "duplicate_player_ids",
+            f"{len(duplicated)} player_id value(s) appear more than once. "
+            f"Examples: {list(duplicated[:_MAX_EXAMPLES])}.",
+            "Make every player_id unique (one row per player), then upload again.",
+        )
+
+    return df
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
@@ -55,23 +183,7 @@ async def analyze(request: Request, file: UploadFile, db: Session = Depends(get_
     t_total = time.perf_counter()
 
     t = time.perf_counter()
-    raw = await file.read()
-    try:
-        df = pd.read_csv(BytesIO(raw))
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Could not parse CSV: {e}") from e
-
-    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
-    if missing:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"CSV is missing required column(s): {missing}. Expected a "
-                f"'player_id' column plus the 11 hybrid feature columns: "
-                f"{FEATURE_ORDER}. This is Path A scope (pre-computed features) "
-                f"-- raw .dem telemetry (Path B) is not supported here."
-            ),
-        )
+    df = await _read_and_validate_csv(file)
     timings["route.read_parse_csv"] = time.perf_counter() - t
 
     models = request.app.state.models
@@ -100,7 +212,11 @@ async def analyze(request: Request, file: UploadFile, db: Session = Depends(get_
     # Ranked triage, not binary flagging (Phase 3.3): rank 1 = most
     # suspicious. is_flagged (above) is retained only as a secondary
     # indicator alongside the score.
-    combined = combined.sort_values("ensemble_score", ascending=False).reset_index(drop=True)
+    # player_id ascending breaks score ties so ranks are stable across calls.
+    combined["player_id"] = combined["player_id"].astype(str)
+    combined = combined.sort_values(
+        ["ensemble_score", "player_id"], ascending=[False, True], kind="mergesort"
+    ).reset_index(drop=True)
     combined["rank"] = combined.index + 1
 
     traceability_cols = [c for c in df.columns if c.endswith(_TRACEABILITY_SUFFIXES)]

@@ -8,9 +8,10 @@ a cache hit -- just a DB read, no recomputation.
 
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from api.errors import api_error
 from api.schemas import PlayerDetailResponse, SHAPFeature
 from core.clustering import load_clustering_artifacts
 from db import crud
@@ -21,11 +22,21 @@ router = APIRouter()
 
 @router.get("/player/{player_id}", response_model=PlayerDetailResponse)
 def get_player(player_id: str, analysis_id: int = Query(...), db: Session = Depends(get_db)):
+    if not crud.analysis_exists(db, analysis_id):
+        raise api_error(
+            404,
+            "analysis_not_found",
+            f"Analysis {analysis_id} does not exist (it may have been deleted).",
+            "Pick an analysis from GET /api/v1/history, or upload the CSV again.",
+        )
+
     player = crud.get_player(db, analysis_id, player_id)
     if player is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Player '{player_id}' not found in analysis {analysis_id}",
+        raise api_error(
+            404,
+            "player_not_found",
+            f"Player '{player_id}' is not in analysis {analysis_id}.",
+            f"Check the player_id against the players listed in GET /api/v1/history/{analysis_id}.",
         )
 
     archetype_description = None

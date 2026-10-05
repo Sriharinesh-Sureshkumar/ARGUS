@@ -88,6 +88,10 @@ def get_analysis(db: Session, analysis_id: int) -> Analysis | None:
     )
 
 
+def analysis_exists(db: Session, analysis_id: int) -> bool:
+    return db.query(Analysis.id).filter(Analysis.id == analysis_id).first() is not None
+
+
 def get_player(db: Session, analysis_id: int, player_id: str) -> Player | None:
     return (
         db.query(Player)

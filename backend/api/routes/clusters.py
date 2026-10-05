@@ -2,9 +2,10 @@
 
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from api.errors import api_error
 from api.schemas import ArchetypeSummary, ClusterPoint, ClusterResponse
 from core.clustering import load_clustering_artifacts
 from db import crud
@@ -22,12 +23,22 @@ def get_clusters(analysis_id: int | None = Query(default=None), db: Session = De
     if analysis_id is None:
         latest = db.query(Analysis).order_by(Analysis.created_at.desc()).first()
         if latest is None:
-            raise HTTPException(status_code=404, detail="No analyses exist yet")
+            raise api_error(
+                404,
+                "no_analyses",
+                "No analyses exist yet, so there are no clusters to show.",
+                "Upload a CSV via POST /api/v1/analyze first.",
+            )
         analysis_id = latest.id
 
     players = crud.get_clusters(db, analysis_id)
     if not players:
-        raise HTTPException(status_code=404, detail=f"Analysis {analysis_id} not found or has no players")
+        raise api_error(
+            404,
+            "analysis_not_found",
+            f"Analysis {analysis_id} does not exist (it may have been deleted).",
+            "Pick an analysis from GET /api/v1/history, or upload the CSV again.",
+        )
 
     artifacts = load_clustering_artifacts()
     archetype_names = artifacts["archetype_names"]

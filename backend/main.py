@@ -18,6 +18,7 @@ import pandas as pd
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.errors import UnhandledErrorMiddleware
 from api.routes import analyze, clusters, health, history, player
 from core.clustering import cluster_and_embed, load_clustering_artifacts
 from core.explainer import init_explainer
@@ -69,6 +70,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ARGUS API", version=MODEL_VERSION, lifespan=lifespan)
 
+# Added before CORS so CORS wraps it (last added = outermost): 500
+# responses then still carry CORS headers for the frontend.
+app.add_middleware(UnhandledErrorMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],

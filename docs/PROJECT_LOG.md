@@ -676,3 +676,77 @@ existing history.*
     and LOG_LEVEL unset: the breakdown appears only at DEBUG; all four
     runs returned HTTP 200 with identical results (8 players, 4
     flagged, rank 1 = p1, ensemble_score 0.6769).
+
+## Phase 4.1.9 — Hardened the API contract before the React frontend
+- Read-only audit (TestClient, throwaway scratch DB) of POST /analyze,
+  GET /player/{id} and /history found these gaps:
+  - Three inputs returned a bare plain-text 500 "Internal Server
+    Error": header-only CSV (0 rows; sklearn rejected 0 samples), NaN
+    in a feature (IsolationForest accepts NaN; KMeans then raised),
+    and non-numeric text in a feature.
+  - Error details were inconsistent free strings; a binary upload
+    leaked the raw Python exception text ("'utf-8' codec can't
+    decode byte 0x89 ...").
+  - No file-type check: .txt/.json uploads were parsed as CSV and
+    reported as "missing required column(s)" (misleading).
+  - No size or row limit: the whole upload was read into memory.
+  - Duplicate player_ids were accepted (200); GET /player then used
+    .first(), so one of each duplicate pair was unreachable.
+  - GET /player with an unknown analysis_id said "Player ... not
+    found", not that the analysis was missing.
+  - No GET /history/{id}: the path returned 405 (it matched the
+    DELETE route), so a past analysis could not be reloaded.
+  - Score ties had no tiebreaker, so ranks were not guaranteed stable.
+- Large-file measurement: one 20,000-row upload (3.0 MB, the 8-row
+  fixture repeated) took 36.7s end-to-end and returned 200. Measured
+  once; the stage breakdown was NOT profiled. For comparison, a
+  5000-row upload took 3.36s in Phase 4.1.9 testing (also measured
+  once), so cost appears to grow faster than linearly — unprofiled.
+- Limits chosen (backend/core/config.py, the single config location;
+  env-overridable via ARGUS_MAX_UPLOAD_BYTES / ARGUS_MAX_ROWS):
+  - MAX_ROWS = 5000: keeps one synchronous /analyze request at a few
+    seconds (3.36s measured) instead of 30s+; larger batches are
+    split by the user. Over-limit files are rejected after parsing
+    only (0.06s for 20,000 rows), before any model runs.
+  - MAX_UPLOAD_BYTES = 10 MiB: 20,000 rows was ~3 MB, so 10 MiB covers
+    MAX_ROWS rows with generous room for extra/traceability columns,
+    while bounding memory. The route reads at most limit+1 bytes.
+    Caveat: Starlette still receives and spools the full multipart
+    body before the route runs; a hard network-level cap would need a
+    reverse proxy or Content-Length check.
+- New standard error shape for every error ARGUS raises itself
+  (backend/api/errors.py, api_error()):
+    {"detail": {"code": str, "message": str, "fix": str}}
+  FastAPI's own request-validation errors (detail is a list) are
+  unchanged; the frontend normalises both. Unhandled exceptions are
+  caught by UnhandledErrorMiddleware -> 500 with code internal_error,
+  traceback logged via logger.error, raw exception text never sent.
+  It is pure ASGI middleware placed inside CORSMiddleware (not an
+  exception_handler(Exception), which Starlette runs outside CORS) so
+  500 bodies stay readable by the browser frontend.
+- POST /analyze validation, in order (all 4xx, before any model runs):
+  wrong_file_type (422, filename not *.csv, case-insensitive),
+  file_too_large (413), unreadable_csv (422, empty/unparseable, no raw
+  exception text), no_rows (422), too_many_rows (422),
+  missing_columns (422, previous message kept), invalid_values (422,
+  NaN/blank/non-numeric/inf in any of the 11 features; names the
+  columns, total bad-cell count, up to 5 (player_id, column)
+  examples), duplicate_player_ids (422, count + up to 5 ids).
+- Ranking: ensemble_score descending, ties broken by player_id
+  ascending (stable mergesort). Scores unchanged: the 8-player fixture
+  returns an identical player_id -> (rank, ensemble_score) mapping
+  before and after.
+- Added GET /api/v1/history/{analysis_id}: same JSON shape as the
+  POST /analyze success response (analysis_id, player_count,
+  flagged_count, flag_threshold, players sorted by rank); unknown id
+  -> 404 analysis_not_found. DELETE /history/{id} still works (200,
+  then 404 analysis_not_found on repeat).
+- GET /player/{id}: unknown analysis_id -> 404 analysis_not_found;
+  valid analysis but unknown player -> 404 player_not_found.
+  GET /clusters and DELETE /history 404s moved to the same shape
+  (no_analyses / analysis_not_found).
+- Verified plain_description's degree sign: raw response bytes are
+  UTF-8 C2 B0 (9 occurrences for p1), no U+FFFD; the earlier "�" was
+  terminal display only.
+- Follow-up: blank/missing player_id values (empty, NaN, whitespace-only) now return 422 invalid_player_id with the count and up to 5 data row numbers (1 = first row after the header); checked before invalid_values and duplicate_player_ids.
+- Verified with one blank id (422, row [3]), two blank ids (422, rows [1, 6]) and the 8-player fixture (200, rank/score mapping identical to the pre-change snapshot).
