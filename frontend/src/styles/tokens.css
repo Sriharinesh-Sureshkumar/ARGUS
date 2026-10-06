@@ -6,9 +6,10 @@
   Components must use those class names, never raw hex values, so the
   palette can be changed here in one place.
 
-  Source: Doc 04 (UI/UX Brief) is not in the repo yet, so these are the
-  known brief values. Anything marked TEMP was added to fill a gap and
-  must be replaced from Doc 04.
+  Source: docs/mockups/upload.png, player-detail.png, history.png
+  (pixel-sampled with PIL, see docs/PROJECT_LOG.md Phase 4.2.0b for the
+  full table). accent-green has no region in those mockups and is
+  unchanged from the earlier brief guess.
 */
 
 @theme {
@@ -17,20 +18,30 @@
      instead of quietly drifting off-palette. */
   --color-*: initial;
 
-  /* Backgrounds (Doc 04 brief) */
-  --color-base: #0A0A0F;    /* page background */
-  --color-surface: #13131A; /* cards, navbar */
+  /* Backgrounds */
+  --color-base: #12110F;    /* page background */
+  --color-surface: #1A1914; /* cards, navbar, modal */
 
-  /* Accents (Doc 04 brief) */
-  --color-accent-green: #6EE7B7;
-  --color-accent-indigo: #818CF8;
-  --color-accent-amber: #FBBF24;
-  --color-accent-red: #F87171;
+  /* Accents */
+  --color-accent-green: #6EE7B7;  /* unchanged -- not present in mockups */
+  --color-accent-indigo: #353955; /* archetype chip: Precise Low-Volume Shooter */
+  --color-accent-amber: #533F1F;  /* archetype chip: High-Volume Erratic Shooter */
+  --color-accent-gray: #35363C;   /* archetype chip: Average Player */
+  --color-accent-red: #F2726C;    /* error state, delete action */
 
   /* Neutrals */
-  --color-content: #E5E7EB;       /* TEMP: replace from Doc 04 -- main text */
-  --color-content-muted: #9CA3AF; /* TEMP: replace from Doc 04 -- secondary text, "checking" dot */
-  --color-line: #26262F;          /* TEMP: replace from Doc 04 -- borders, dividers */
+  --color-content: #F2F3F2;       /* main text */
+  --color-content-muted: #7E7C79; /* secondary text, captions */
+  --color-line: #312E28;          /* borders, dividers */
+
+  /* Component-specific */
+  --color-primary-button: #F8E0BA; /* CTA button fill (Try again, Upload a CSV) */
+  --color-button-text: #000000;    /* text on primary-button / podium badge */
+  --color-bar-fill: #F1D6A7;       /* suspicion-score bar / progress bar fill */
+  --color-bar-track: #33302A;      /* suspicion-score bar / progress bar track */
+  --color-tooltip-bg: #302E29;     /* small tag/tooltip chips, e.g. "engagement 29 - 0.83 s" */
+  --color-podium: #F5C973;         /* #1 leaderboard card border (results.png; not in the
+                                       upload/player-detail/history source set -- see log) */
 
   /* Fonts: Inter for UI text, JetBrains Mono for numbers/scores/ids.
      The font files are self-hosted via @fontsource (imported in main.jsx). */

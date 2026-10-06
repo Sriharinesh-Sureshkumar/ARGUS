@@ -793,3 +793,62 @@ existing history.*
   FastAPI list-style 422s (code validation_error), backend
   unreachable (code network_error), and non-JSON bodies (code
   unexpected_response).
+
+## Phase 4.2.0b — Adopted the mockup palette into design tokens
+- Replaced the Doc-04-brief guesses in frontend/src/styles/tokens.css
+  with colours pixel-sampled from docs/mockups/upload.png,
+  player-detail.png and history.png (idle/uploading/processing/error
+  panels; full-page + loading panels; list/delete-modal/empty-state
+  panels). Sampling script: PIL, median of a small flat patch per
+  region (gradient fills like the score bar used the median of all
+  non-background pixels in the element's bbox, since a single pixel
+  isn't representative of a gradient).
+- Token table (region -> hex -> source image, panel):
+
+  | Region                     | Hex       | Source image, panel |
+  |-----------------------------|-----------|----------------------|
+  | Page background             | `#12110F` | upload.png, gap between Idle/Processing panels |
+  | Card/surface background     | `#1A1914` | player-detail.png, Full Page panel (score card) |
+  | Card border / divider       | `#312E28` | player-detail.png Full Page + upload.png Idle panel card edges (averaged) |
+  | Primary text                | `#F2F3F2` | player-detail.png, Full Page panel ("Why this player ranks high") |
+  | Muted text                  | `#7E7C79` | upload.png Idle ("Needs a player_id column..."), player-detail.png Full Page ("Few shots, very precise aim."), history.png Delete Confirmation body text -- averaged, see disagreement note |
+  | Primary button fill         | `#F8E0BA` | upload.png Error panel ("Try again") + history.png Empty State ("Upload a CSV") |
+  | Button text                 | `#000000` | upload.png Error panel ("Try again"), history.png Empty State button -- pure black on both |
+  | Score-bar / progress-bar fill | `#F1D6A7` | player-detail.png Full Page (reason-row bar) + upload.png Uploading panel (progress bar) -- averaged gradient medians |
+  | Score-bar / progress-bar track | `#33302A` | same panels as fill |
+  | Archetype chip: Precise Low-Volume Shooter (indigo) | `#353955` | player-detail.png, Full Page panel |
+  | Archetype chip: Average Player (gray) | `#35363C` | results.png, table row ("Average Player") -- see scope note |
+  | Archetype chip: High-Volume Erratic Shooter (amber) | `#533F1F` | results.png, #1 podium card chip -- see scope note |
+  | Archetype chip text (all 3) | `#F2F3F2` (= content) | could not isolate a flat non-anti-aliased pixel at this font size in any chip; anti-aliased blend pixels on all 3 chip backgrounds are consistent with white/content-colour text, so chips reuse the content token rather than getting a dedicated colour |
+  | Error / red accent          | `#F2726C` | upload.png Error panel (icon ring + left border) + history.png Delete Confirmation (icon + Delete button) -- averaged |
+  | Podium highlight (#1 card border) | `#F5C973` | results.png -- see scope note |
+  | Tooltip / tag background    | `#302E29` | player-detail.png, Full Page panel ("engagement 29 - 0.83 s" tag) |
+
+- Scope note: the task restricted sampling to upload.png,
+  player-detail.png and history.png (future-dem-dashboard.png as
+  cross-check only). Two requested regions don't exist in that set:
+  the "Average Player" and "High-Volume Erratic Shooter" archetype
+  chips only appear as filled pills in results.png (player-detail.png
+  only shows the player's own chip, "Precise Low-Volume Shooter"),
+  and the podium "#1" highlight only exists on results.png's
+  leaderboard cards. Pulled those 3 values from results.png instead
+  of skipping them, flagged here for the owner to confirm.
+- Disagreement across source images: muted text luminance varied
+  more than other regions -- `#726F6A` (upload.png), `#828181`
+  (player-detail.png), `#858481` (history.png). Token uses the
+  average, `#7E7C79`; the spread is likely different font weights
+  across panels rather than a real colour difference.
+- `--color-accent-green` (`#6EE7B7`) is unchanged: no green appears
+  anywhere in the sampled mockups. It's still referenced by
+  Navbar.jsx for the "online" status dot and the ARGUS logo text --
+  worth noting the logo renders white/cream (`#F2F3F2`-ish) in every
+  mockup panel, not green, so that usage may need revisiting when
+  Navbar is rebuilt from the mockups.
+- Added tokens with no prior equivalent: `--color-accent-gray`,
+  `--color-primary-button`, `--color-button-text`,
+  `--color-bar-fill`, `--color-bar-track`, `--color-tooltip-bg`,
+  `--color-podium`. Removed the TEMP comments on content /
+  content-muted / line now that they're mockup-sourced.
+- Verified: `npm run build` and `npm run lint` (oxlint) both pass;
+  `grep -rn '#[0-9A-Fa-f]\{3,8\}' frontend/src --include=*.{js,jsx,css} | grep -v tokens.css`
+  returns nothing, so no raw hex values exist outside tokens.css.
