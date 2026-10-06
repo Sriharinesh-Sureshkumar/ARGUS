@@ -852,3 +852,79 @@ existing history.*
 - Verified: `npm run build` and `npm run lint` (oxlint) both pass;
   `grep -rn '#[0-9A-Fa-f]\{3,8\}' frontend/src --include=*.{js,jsx,css} | grep -v tokens.css`
   returns nothing, so no raw hex values exist outside tokens.css.
+
+## Phase 4.2.0c — Completed the palette (clusters/history/results) + rebuilt Navbar
+- Sampled the remaining regions from docs/mockups/clusters.png,
+  history.png and results.png with PIL. Small text was upscaled 4x
+  (Lanczos) before sampling; glyph colour = median of the brightest
+  (or, for dark-on-light text, darkest) 10% of pixels in the upscaled
+  region, per the owner's brief -- this still blends with the
+  background at this font size (see chip-text note below), but is as
+  close as the mockup resolution allows.
+- Token table (region -> hex -> source image, panel):
+
+  | Region | Hex | Source |
+  |---|---|---|
+  | Scatter dot, Cluster A (indigo) | `#555AA7` | clusters.png, scatter chart |
+  | Scatter dot, Cluster B (gray) | `#7D7C79` | clusters.png, scatter chart -- **equals `--color-content-muted` (`#7E7C79`), reused, no new token** |
+  | Scatter dot, Cluster C (amber) | `#AD8448` | clusters.png, scatter chart |
+  | Legend/card dot, Cluster A | `#7F8BF3` | clusters.png, right-side cluster card |
+  | Legend/card dot, Cluster B | `#A3A09D` | clusters.png, right-side cluster card |
+  | Legend/card dot, Cluster C | `#F0BF6E` | clusters.png, right-side cluster card |
+  | Selected-point ring | `#F3ECEA` | clusters.png, scatter chart -- close enough to `--color-content` (`#F2F3F2`) to reuse, no new token |
+  | Active nav-tab underline | `#EBD8B2` | clusters.png, top nav ("Clusters" active) |
+  | Active nav-tab text | `#F8EFCE` | clusters.png, top nav -- close to the underline sample; standardized on one new token (`--color-nav-active`, the underline value) for both, see Navbar notes |
+  | "Open ->" row link | `#A1B5E2` | history.png, List panel |
+  | Row hover / highlighted-row background | `#342E21` | history.png List panel (hover) + results.png table (highlighted row 8) -- same value on both, one token |
+  | Chip text, Precise Low-Volume Shooter | `#B1B9CB` | results.png -- measured per the brief's method, but still a blend with the indigo fill at this font size, not a flat colour |
+  | Chip text, Average Player | `#928F8B` | results.png -- same caveat |
+  | Chip text, High-Volume Erratic Shooter | `#D7C196` | results.png -- same caveat |
+  | Gold score number (#1 card) | `#FDE7BD` | results.png, podium card -- within ~3% of `--color-primary-button` (`#F8E0BA`), reused, no new token |
+  | Active pagination button border | `#BC9A65` | results.png, pagination row |
+  | Active pagination button fill | n/a | results.png -- no reliably distinct fill found; reuses `--color-surface` |
+  | Dashed dropzone / empty-state border | `#3F3C35` | upload.png Idle panel + history.png Empty State panel (averaged, consistent) |
+
+- Chip text colours: at this font size there's no flat non-anti-aliased
+  pixel in any of the 3 chips (confirmed again this phase with the
+  4x-upscale method) -- each measured colour is pulled toward its own
+  chip fill, which is the signature of an aliasing blend, not 3
+  deliberately different text colours. No chip component exists yet,
+  so no token was added for this; when chips are built, start from
+  `--color-content` (white) on top of the chip fill and compare
+  against a live render rather than these numbers.
+- Added tokens (none existed before): `--color-cluster-indigo`
+  `#7F8BF3`, `--color-cluster-gray` `#A3A09D`, `--color-cluster-amber`
+  `#F0BF6E`, `--color-nav-active` `#EBD8B2`, `--color-link` `#A1B5E2`,
+  `--color-row-highlight` `#342E21`, `--color-dropzone-border`
+  `#3F3C35`, `--color-pagination-active-border` `#BC9A65`.
+- Scatter dots vs. card/legend dots: for each archetype the scatter-chart
+  dot is the same hue as its card dot, just blended toward
+  `--color-base` at roughly 60-65% opacity (solved per-channel from the
+  two sampled colours). Documented as a usage convention in
+  tokens.css rather than adding 3 more tokens: scatter dots should
+  render `bg-cluster-*` at ~60% opacity over the chart background.
+- Navbar.jsx: removed the backend status dot entirely (useState,
+  useEffect, the getHealth() call, STATUS_STYLES, the error-message
+  state, and the dot/label markup). `getHealth` stays exported from
+  src/api/client.js, just unused by Navbar now. Logo now uses
+  `text-content` (was `text-accent-green`). Active link now gets a
+  2px `border-nav-active` bottom border plus `text-nav-active`
+  (`isActive` still comes from react-router's `NavLink`, so it tracks
+  the route, not a hardcoded page); inactive links keep
+  `text-content-muted hover:text-content` with a transparent border of
+  the same width so the tab row doesn't shift height between states.
+- `--color-accent-green` removed from tokens.css: after the logo and
+  dot changes it had zero references anywhere in frontend/src, and it
+  never had a mockup source to begin with (flagged unused back in
+  Phase 4.2.0b already).
+- `--color-accent-amber` and `--color-accent-red` were *also* only
+  referenced by the now-deleted status dot, which taken literally
+  would mark them for removal too -- but both are real, already
+  mockup-sourced tokens from Phase 4.2.0b (archetype-C chip fill, and
+  the upload-error/delete-modal accent respectively) that upcoming
+  components will need. Deleting them now would just mean re-sampling
+  the same pixels later. Kept them; flagging this judgment call
+  explicitly in case the intent was stricter.
+- Verified: `npm run build` and `npm run lint` (oxlint) both pass;
+  `grep -rnE '#[0-9A-Fa-f]{3,8}' frontend/src --include=*.js --include=*.jsx --include=*.css | grep -v tokens.css`
+  and `grep -rn "accent-green" frontend/src` both return nothing.

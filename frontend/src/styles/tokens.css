@@ -6,10 +6,9 @@
   Components must use those class names, never raw hex values, so the
   palette can be changed here in one place.
 
-  Source: docs/mockups/upload.png, player-detail.png, history.png
-  (pixel-sampled with PIL, see docs/PROJECT_LOG.md Phase 4.2.0b for the
-  full table). accent-green has no region in those mockups and is
-  unchanged from the earlier brief guess.
+  Source: docs/mockups/upload.png, player-detail.png, history.png,
+  clusters.png, results.png (pixel-sampled with PIL, see
+  docs/PROJECT_LOG.md Phase 4.2.0b / 4.2.0c for the full tables).
 */
 
 @theme {
@@ -22,17 +21,24 @@
   --color-base: #12110F;    /* page background */
   --color-surface: #1A1914; /* cards, navbar, modal */
 
-  /* Accents */
-  --color-accent-green: #6EE7B7;  /* unchanged -- not present in mockups */
+  /* Accents -- muted chip-fill tones (pair with --color-content text) */
   --color-accent-indigo: #353955; /* archetype chip: Precise Low-Volume Shooter */
   --color-accent-amber: #533F1F;  /* archetype chip: High-Volume Erratic Shooter */
   --color-accent-gray: #35363C;   /* archetype chip: Average Player */
   --color-accent-red: #F2726C;    /* error state, delete action */
 
+  /* Cluster accents -- saturated tones for scatter/legend dots (clusters.png).
+     Scatter-plot dots render these at ~60% opacity over --color-base; the
+     legend/card dots use them at full opacity. */
+  --color-cluster-indigo: #7F8BF3;
+  --color-cluster-gray: #A3A09D;
+  --color-cluster-amber: #F0BF6E;
+
   /* Neutrals */
   --color-content: #F2F3F2;       /* main text */
   --color-content-muted: #7E7C79; /* secondary text, captions */
   --color-line: #312E28;          /* borders, dividers */
+  --color-dropzone-border: #3F3C35; /* dashed upload-dropzone / empty-state border */
 
   /* Component-specific */
   --color-primary-button: #F8E0BA; /* CTA button fill (Try again, Upload a CSV) */
@@ -42,6 +48,10 @@
   --color-tooltip-bg: #302E29;     /* small tag/tooltip chips, e.g. "engagement 29 - 0.83 s" */
   --color-podium: #F5C973;         /* #1 leaderboard card border (results.png; not in the
                                        upload/player-detail/history source set -- see log) */
+  --color-nav-active: #EBD8B2;     /* active nav-tab underline + active tab text */
+  --color-link: #A1B5E2;           /* "Open ->" row links */
+  --color-row-highlight: #342E21;  /* table row hover / highlighted row background */
+  --color-pagination-active-border: #BC9A65; /* current-page pagination button border */
 
   /* Fonts: Inter for UI text, JetBrains Mono for numbers/scores/ids.
      The font files are self-hosted via @fontsource (imported in main.jsx). */
