@@ -928,3 +928,125 @@ existing history.*
 - Verified: `npm run build` and `npm run lint` (oxlint) both pass;
   `grep -rnE '#[0-9A-Fa-f]{3,8}' frontend/src --include=*.js --include=*.jsx --include=*.css | grep -v tokens.css`
   and `grep -rn "accent-green" frontend/src` both return nothing.
+
+## Phase 4.2.1 — Upload page (real upload %, skeleton processing state, error panel)
+- New dependency: axios (only one added, per scope). Used for
+  `POST /analyze` because it exposes real per-request upload-progress
+  events (`onUploadProgress`); the plain `fetch()` used by
+  `src/api/client.js`'s `getHealth()` has no equivalent for a request
+  body.
+- Files added: `src/config.js` (MAX_UPLOAD_BYTES=10MiB, MAX_ROWS=5000 --
+  comment notes these must mirror `backend/core/config.py`, the real
+  source of truth), `src/api/analyze.js` (`uploadCsv()`), the 4 panel
+  components under `src/components/upload/` (DropZone, UploadProgress,
+  ProcessingSkeleton, UploadError) plus a shared `icons.jsx` (inline
+  SVG, `currentColor` only), and skeleton-shimmer / indeterminate-bar
+  keyframes added to `src/index.css` (colours via `var(--color-...)`,
+  never raw hex, so the "no hex outside tokens.css" rule still holds).
+- Files changed: `src/api/client.js` (`normalizeError()` extended to
+  also accept axios errors -- `err.response` reuses the existing
+  detail-object/detail-list/plain-string logic via a shared
+  `normalizeErrorBody()` helper; `err.request` with no response, or
+  `err.code === "ERR_NETWORK"`, becomes `network_error` naming the
+  configured base URL in `fix`; `axios.isCancel(err)` returns `null` so
+  a deliberate abort never surfaces as an error panel), `src/pages/
+  UploadPage.jsx` (full rebuild, stub text removed).
+- State machine: one `status` field (`"idle" | "uploading" |
+  "processing" | "error"`) plus `file`, `progress`, `error` -- no
+  separate booleans. Transitions match the spec exactly: idle->error on
+  a failed client check (nothing sent), idle->uploading only after
+  checks pass, uploading->processing when axios's `onUploadProgress`
+  reports 100% (bytes fully sent, response still pending -- there's no
+  real server-side progress for a synchronous `/analyze` call), success
+  navigates away (`useNavigate`) rather than setting a "done" status,
+  any failure in uploading/processing goes to error, and "Try again"
+  resets straight back to idle.
+- Client-side checks run before any network call, in the given order
+  (wrong_file_type, file_too_large, then empty-file), reusing the same
+  `{code, message, fix}` shape the backend uses -- `UploadError` never
+  needs to know whether an error came from the client or the server.
+- Decisions: 120s axios timeout (matches the spec; generous vs. the
+  measured warm-path cost of a few seconds, covers a cold UMAP JIT
+  compile per Phase 4.1.7). AbortController is created per-upload and
+  aborted in a `useEffect` cleanup with an empty dependency array (not
+  tied to `file`/`status`), so the actual `uploadCsv()` call only ever
+  fires from the real file-select/drop event handler -- React
+  StrictMode's dev-only double-invoke of effects never starts a second
+  request, it can only abort one that was never started. A resolved
+  response after unmount is impossible to act on anyway since `navigate`
+  requires the router context, but the abort means the request is
+  actually cancelled, not just ignored.
+- Indeterminate processing bar and skeleton-row shimmer are CSS
+  keyframe animations (`index.css`), both disabled under
+  `@media (prefers-reduced-motion: reduce)`; the gear icon's spin uses
+  Tailwind's built-in `animate-spin` + `motion-reduce:animate-none`.
+- Known limits carried over from the backend contract (Phase 4.1.9):
+  row-count (`MAX_ROWS`) is checked server-side only -- the client
+  can't count CSV rows without parsing the file, which was out of
+  scope here, so an over-limit file still gets uploaded and only then
+  rejected by the server's `too_many_rows` 422.
+- Verified: `npm run build` and `npm run lint` (oxlint) both pass
+  clean; `grep -rnE '#[0-9A-Fa-f]{3,8}' frontend/src --include=*.js
+  --include=*.jsx --include=*.css | grep -v tokens.css` returns
+  nothing.
+- Backend was not running during this phase (confirmed via `curl` to
+  `/api/v1/health`, connection refused) -- not started, per scope; the
+  upload flow was verified by build/lint/visual-match to the mockup
+  only, not a live end-to-end request.
+- 5 fixture files generated in the OS temp dir (outside the repo, per
+  scope), not committed: `valid.csv` (50 rows, player_id + the 11
+  hybrid feature columns, random plausible values), `missing_col.csv`
+  (same 50 rows, `yaw_jerk` column removed), `notes.txt` (plain text,
+  wrong extension), `empty.csv` (0 bytes), `big.csv` (~11 MiB, over the
+  10 MiB limit).
+
+## Phase 4.2.1b — Made backend validation messages user-facing (wording only)
+- Scope: `backend/api/routes/analyze.py` only. No code/HTTP-status/
+  response-shape changes -- every `api_error(status, code, message,
+  fix)` call keeps its existing status and `code`; only the `message`/
+  `fix` text changed. The other routers (`player.py`, `history.py`,
+  `clusters.py`, `health.py`) were reviewed and already used plain
+  sentences with no Python repr or internal jargon, so none were
+  touched.
+- Problem: several messages leaked internal project vocabulary ("Path
+  A", "Path B", "hybrid", ".dem telemetry") that means nothing to an
+  end user uploading a CSV, and three messages embedded raw Python
+  `list`/tuple reprs (e.g. `['yaw_jerk']`, `[('p3', 'yaw_jerk')]`,
+  `['p3', 'p7']`) instead of plain comma-separated text.
+- `wrong_file_type` -- before: `"'<name>' is not a .csv file. ARGUS
+  accepts pre-computed feature CSVs only (Path A); raw .dem demos are
+  not supported."` / after: `"'<name>' is not a .csv file."` (fix
+  unchanged, already plain).
+- `missing_columns` -- before: `"CSV is missing required column(s):
+  ['yaw_jerk']. Expected a 'player_id' column plus the 11 hybrid
+  feature columns: ['peak_yaw_delta', ...]. This is Path A scope
+  (pre-computed features) -- raw .dem telemetry (Path B) is not
+  supported here."`, fix `"Add the missing column(s) ['yaw_jerk'] to
+  the header row (names are case-sensitive)."` / after: message
+  `"Missing required column(s): yaw_jerk"`, fix `"Add the missing
+  column(s) to the header row (names are case-sensitive). Required
+  columns: player_id, peak_yaw_delta, peak_pitch_delta, mean_yaw_delta,
+  snap_count, min_cv_yaw, min_cv_pitch, cv_yaw_std, cv_pitch_std,
+  fire_on_target_rate, yaw_jerk, engagement_firing_rate."`
+- `invalid_player_id` -- before: row numbers shown as a Python list,
+  e.g. `"... after the header): [3]."` / after: plain comma list, e.g.
+  `"... after the header): 3."` (message otherwise unchanged).
+- `invalid_values` -- before: `"... in column(s) ['min_cv_pitch'].
+  Examples as (player_id, column): [('p0', 'min_cv_pitch')]."`, fix
+  `"... no blanks, NaN, text or inf) ..."` / after: `"... in column(s):
+  min_cv_pitch. Examples: player_id p0, column min_cv_pitch."`, fix
+  reworded to `"... no blank cells, text, or infinite/undefined
+  values) ..."` (drops the "NaN"/"inf" abbreviations).
+- `duplicate_player_ids` -- before: `"Examples: ['p0']."` / after:
+  `"Examples: p0."`
+- Verified via a scratch `TestClient` script (not committed, run from
+  the project's `uv` environment) against four cases, confirming HTTP
+  status and `code` are unchanged and `message`/`fix` read as plain
+  text: a CSV missing `yaw_jerk` (422 `missing_columns`), a blank
+  feature cell / NaN (422 `invalid_values`), a duplicate `player_id`
+  (422 `duplicate_player_ids`), and a blank `player_id` (422
+  `invalid_player_id`). All four printed JSON bodies matched the
+  before/after table above.
+- No existing automated test suite asserts these strings
+  (`backend/tests/` holds only a CSV fixture, no test files), so there
+  was nothing to update or break.

@@ -71,8 +71,7 @@ async def _read_and_validate_csv(file: UploadFile) -> pd.DataFrame:
         raise api_error(
             422,
             "wrong_file_type",
-            f"'{filename or '(no filename)'}' is not a .csv file. ARGUS accepts pre-computed "
-            f"feature CSVs only (Path A); raw .dem demos are not supported.",
+            f"'{filename or '(no filename)'}' is not a .csv file.",
             _CSV_FORMAT_FIX,
         )
 
@@ -120,11 +119,9 @@ async def _read_and_validate_csv(file: UploadFile) -> pd.DataFrame:
         raise api_error(
             422,
             "missing_columns",
-            f"CSV is missing required column(s): {missing}. Expected a "
-            f"'player_id' column plus the 11 hybrid feature columns: "
-            f"{FEATURE_ORDER}. This is Path A scope (pre-computed features) "
-            f"-- raw .dem telemetry (Path B) is not supported here.",
-            f"Add the missing column(s) {missing} to the header row (names are case-sensitive).",
+            f"Missing required column(s): {', '.join(missing)}",
+            f"Add the missing column(s) to the header row (names are case-sensitive). "
+            f"Required columns: {', '.join(REQUIRED_COLUMNS)}.",
         )
 
     # Checked before invalid_values so its (player_id, column) examples
@@ -132,11 +129,12 @@ async def _read_and_validate_csv(file: UploadFile) -> pd.DataFrame:
     blank_ids = (df["player_id"].isna() | df["player_id"].astype(str).str.strip().eq("")).to_numpy()
     if blank_ids.any():
         row_numbers = (np.flatnonzero(blank_ids) + 1).tolist()
+        shown_rows = ", ".join(str(n) for n in row_numbers[:_MAX_EXAMPLES])
         raise api_error(
             422,
             "invalid_player_id",
             f"{len(row_numbers)} row(s) have a blank or missing player_id. "
-            f"Data row number(s) (1 = first row after the header): {row_numbers[:_MAX_EXAMPLES]}.",
+            f"Data row number(s) (1 = first row after the header): {shown_rows}.",
             "Give every row a non-empty player_id, or remove those rows.",
         )
 
@@ -150,23 +148,25 @@ async def _read_and_validate_csv(file: UploadFile) -> pd.DataFrame:
         rows, cols = np.nonzero(invalid)  # row-major: examples follow file order
         bad_columns = [c for j, c in enumerate(FEATURE_ORDER) if invalid[:, j].any()]
         examples = [(player_ids.iat[i], FEATURE_ORDER[j]) for i, j in zip(rows[:_MAX_EXAMPLES], cols[:_MAX_EXAMPLES])]
+        shown_examples = ", ".join(f"player_id {pid}, column {col}" for pid, col in examples)
         raise api_error(
             422,
             "invalid_values",
-            f"{len(rows)} cell(s) are empty, non-numeric or infinite in column(s) {bad_columns}. "
-            f"Examples as (player_id, column): {examples}.",
-            "Fill every feature cell with a finite number (no blanks, NaN, text or inf), "
-            "or remove the affected players.",
+            f"{len(rows)} cell(s) are empty, non-numeric or infinite in column(s): "
+            f"{', '.join(bad_columns)}. Examples: {shown_examples}.",
+            "Fill every feature cell with a plain finite number (no blank cells, text, "
+            "or infinite/undefined values), or remove the affected players.",
         )
     df[FEATURE_ORDER] = features
 
     duplicated = player_ids[player_ids.duplicated(keep=False)].unique()
     if len(duplicated):
+        shown_duplicates = ", ".join(str(pid) for pid in duplicated[:_MAX_EXAMPLES])
         raise api_error(
             422,
             "duplicate_player_ids",
             f"{len(duplicated)} player_id value(s) appear more than once. "
-            f"Examples: {list(duplicated[:_MAX_EXAMPLES])}.",
+            f"Examples: {shown_duplicates}.",
             "Make every player_id unique (one row per player), then upload again.",
         )
 
