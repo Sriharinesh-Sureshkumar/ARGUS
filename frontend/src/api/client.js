@@ -1,3 +1,5 @@
+import axios from 'axios'
+
 // Talks to the ARGUS FastAPI backend.
 //
 // Base URL: set VITE_API_BASE_URL in frontend/.env.local to override.
@@ -16,38 +18,9 @@ function makeApiError({ status = null, code, message, fix }) {
   return error
 }
 
-// Turn ANY failure into { status, code, message, fix } so pages only ever
-// have to handle one shape. Pass it either the error thrown by fetch()
-// (backend unreachable) or a non-OK Response.
-export async function normalizeError(responseOrError) {
-  // fetch() only throws when no HTTP response arrived at all: the backend
-  // is down, the URL is wrong, or CORS blocked the request.
-  if (!(responseOrError instanceof Response)) {
-    return makeApiError({
-      code: 'network_error',
-      message: 'Cannot reach the ARGUS backend',
-      fix: 'Check that the backend is running',
-    })
-  }
-
-  const response = responseOrError
-  const status = response.status
-
-  // Read as text first: a proxy or crash page may send HTML, and
-  // response.json() would throw a confusing SyntaxError on it.
-  const text = await response.text()
-  let body
-  try {
-    body = JSON.parse(text)
-  } catch {
-    return makeApiError({
-      status,
-      code: 'unexpected_response',
-      message: `The backend sent an unexpected (non-JSON) response (HTTP ${status}).`,
-      fix: 'Check that VITE_API_BASE_URL points at the ARGUS API and look at the backend logs.',
-    })
-  }
-
+// Shared by both the fetch path (body already parsed from response.json())
+// and the axios path (body is err.response.data, already parsed by axios).
+function normalizeErrorBody(status, body) {
   const detail = body?.detail
 
   // Our own errors (Phase 4.1.9): { detail: { code, message, fix } }
@@ -84,6 +57,74 @@ export async function normalizeError(responseOrError) {
     message: `The backend returned HTTP ${status}.`,
     fix: 'Try again. If it keeps happening, check the backend logs.',
   })
+}
+
+// Turn ANY failure into { status, code, message, fix } so pages only ever
+// have to handle one shape. Accepts:
+//   - the error thrown by fetch() (backend unreachable) or a non-OK Response
+//   - an axios error (uploadCsv()) -- returns null for a deliberate abort,
+//     since the caller should just ignore it, not show an error panel.
+export async function normalizeError(responseOrError) {
+  if (axios.isCancel(responseOrError)) {
+    return null
+  }
+
+  if (responseOrError?.isAxiosError) {
+    const axiosError = responseOrError
+
+    if (axiosError.response) {
+      // axios already parses a JSON body into .data; a non-JSON body
+      // (HTML error page, empty body) comes through as a string or undefined.
+      const { status, data } = axiosError.response
+      if (data && typeof data === 'object') {
+        return normalizeErrorBody(status, data)
+      }
+      return makeApiError({
+        status,
+        code: 'unexpected_response',
+        message: `The backend sent an unexpected (non-JSON) response (HTTP ${status}).`,
+        fix: 'Check that VITE_API_BASE_URL points at the ARGUS API and look at the backend logs.',
+      })
+    }
+
+    // A request went out but no response came back: backend down, wrong
+    // URL, or CORS blocked it.
+    return makeApiError({
+      code: 'network_error',
+      message: 'Cannot reach the ARGUS backend.',
+      fix: `Check that the ARGUS backend is running on ${API_BASE_URL} and try again.`,
+    })
+  }
+
+  // fetch() only throws when no HTTP response arrived at all: the backend
+  // is down, the URL is wrong, or CORS blocked the request.
+  if (!(responseOrError instanceof Response)) {
+    return makeApiError({
+      code: 'network_error',
+      message: 'Cannot reach the ARGUS backend',
+      fix: 'Check that the backend is running',
+    })
+  }
+
+  const response = responseOrError
+  const status = response.status
+
+  // Read as text first: a proxy or crash page may send HTML, and
+  // response.json() would throw a confusing SyntaxError on it.
+  const text = await response.text()
+  let body
+  try {
+    body = JSON.parse(text)
+  } catch {
+    return makeApiError({
+      status,
+      code: 'unexpected_response',
+      message: `The backend sent an unexpected (non-JSON) response (HTTP ${status}).`,
+      fix: 'Check that VITE_API_BASE_URL points at the ARGUS API and look at the backend logs.',
+    })
+  }
+
+  return normalizeErrorBody(status, body)
 }
 
 // Shared fetch wrapper: returns parsed JSON on success, throws a
