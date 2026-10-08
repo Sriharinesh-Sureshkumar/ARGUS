@@ -1050,3 +1050,211 @@ existing history.*
 - No existing automated test suite asserts these strings
   (`backend/tests/` holds only a CSV fixture, no test files), so there
   was nothing to update or break.
+
+## Phase 4.2.2 — Results page (podium, searchable/paginated table)
+- Files added: `src/api/history.js` (`getAnalysis()`, `listHistory()`,
+  axios, reusing `normalizeError`); `src/lib/clusters.js` (single
+  `cluster_id -> {chipBg, dot}` map, the one place cluster colour is
+  decided -- ClustersPage/PlayerDetailPage will key off it too when
+  built); `src/components/ArchetypeChip.jsx`; `src/components/
+  icons.jsx` (BackArrow/Search/ChevronLeft/ChevronRight -- kept
+  separate from `upload/icons.jsx`, which stays scoped to the upload
+  flow); `src/components/ErrorPanel.jsx` (generalised from
+  `UploadError.jsx`, which was deleted -- `UploadPage.jsx` now imports
+  `ErrorPanel`); `src/components/results/{Podium,ResultsTable,
+  Pagination,ResultsHeader,ResultsSkeleton}.jsx`; full rebuild of
+  `src/pages/ResultsPage.jsx` (stub removed).
+- `created_at` sample pulled live from `GET /api/v1/history`:
+  `"2026-10-07T05:58:15.013581"` -- no timezone suffix, even though
+  `db/models.py` writes `datetime.now(timezone.utc)` (the `DateTime`
+  column is naive, so SQLite drops the tzinfo on the way in). Parsed in
+  `ResultsHeader.jsx` by appending `"Z"` before `new Date(...)` so the
+  browser reads it as UTC rather than local time; formatted with
+  `Intl.DateTimeFormat("en-GB", {day:"numeric",month:"short",
+  year:"numeric"})` -> e.g. "6 Oct 2026".
+- Cluster mapping, read live from `GET /api/v1/clusters?analysis_id=17`
+  and `backend/trained_models/archetype_names.json` (k=3, fixed by
+  training -- analysis 17's fixture data happened to land entirely in
+  cluster 2, so analysis 12 was used to confirm clusters 0/1 render
+  distinct colours too):
+  | cluster_id | archetype_name | colour | mean ensemble_score (an. 17) |
+  |---|---|---|---|
+  | 0 | Average Player | gray | -- (not present in an. 17; 0.508 in an. 12) |
+  | 1 | Precise, Low-Volume Shooter | indigo | -- (not present in an. 17; 0.514 in an. 12) |
+  | 2 | High-Volume, Erratic Shooter | amber | 0.9992 |
+  Note the backend's real `archetype_name` strings have a comma
+  ("Precise, Low-Volume Shooter") that the mockup's chip text doesn't
+  -- rendered the real API value verbatim rather than the mockup's text
+  (no fake/hardcoded labels).
+- State: one `result` object (`{key, data, meta, error}`) plus
+  `retryKey`/`query`/`page` -- no separate `status` field. `status` is
+  derived during render by comparing `result.key` to a `requestKey`
+  (`` `${analysisId}:${retryKey}` ``) built fresh each render: a
+  mismatch means loading. This was a deviation from a first pass that
+  used an explicit `status` field reset synchronously at the top of the
+  effect -- `oxlint`'s `react(set-state-in-effect)` flagged that
+  (setState synchronously in an effect body, vs. from an async
+  `.then()`/`.catch()`), so it was restructured to derive status
+  instead, and the `query`/`page` reset-on-`analysisId`-change moved to
+  React's documented "adjusting state during rendering" pattern (a
+  plain `if (analysisId !== prevAnalysisId)` block, not an effect).
+  `getAnalysis`/`listHistory` run via `Promise.all`; the history-list
+  promise has its own trailing `.catch(() => null)` so its failure
+  can't block the page -- confirmed live by requesting analysis 17's
+  page while `GET /history` was still well-formed (no way to break it
+  without touching the read-only backend, so this is a code-path
+  argument, not a live-broken-history-endpoint test).
+- Podium order #2/#1/#3 via `[second, first, third].filter(Boolean)`
+  plus `flex justify-center` (not a fixed 3-column grid), so 1 or 2
+  players still centre instead of left-aligning.
+- Pagination window implemented exactly per spec (`{1, current-1,
+  current, current+1, last}`, deduped via `Set`, ellipsis wherever two
+  kept pages aren't adjacent) -- this collapses to fewer visible
+  numbers near the ends (e.g. current=2, total=14 -> "1 2 3 ... 14")
+  than `docs/mockups/results.png` shows ("1 2 3 4 5 ... 14"); followed
+  the written formula over the static mockup image.
+- Search is substring, case-insensitive, over every player (not just
+  the current page); hides the podium and searches real ranks, per
+  spec. Table's primary (Player ID) cell is the only `<Link>` per row;
+  the full `<tr>` gets `hover:bg-row-highlight` so the row still reads
+  as the hit target even though only one cell navigates.
+- Verified (backend running throughout, confirmed via `curl .../health`
+  first): `npm run build` and `npm run lint` (oxlint) both clean;
+  `grep -rnoE '#[0-9a-fA-F]{3,8}\b' frontend/src | grep -v
+  tokens.css` empty. Dev server (already running on :5173 from an
+  earlier session) exercised with a scratch Playwright script (not
+  committed) against the live backend:
+  - Analysis 15 (50 players): header "valid.csv", "50 players analysed
+    - 6 Oct 2026"; 3 podium cards; 9 table rows page 1.
+  - Analysis 17 (5000 players): header "valid_5000.csv"; 3 podium
+    cards; **9 table rows page 1** (total DOM rows = 9 + 3 = 12, not
+    4997) -- confirms pagination actually slices rather than rendering
+    everything. Search "p100" -> 9 of its matches shown page 1;
+    "zzzznomatch" -> empty state with working "Clear search" (podium
+    reappeared after); clicking page 2 -> "Showing 10-18 of 4997",
+    first row rank 13 (podium's top 3 correctly excluded from the
+    count).
+  - Analysis 99999: 404 `analysis_not_found` rendered via `ErrorPanel`
+    with "Back to upload" / "Open history" actions (no "Try again",
+    no table/podium).
+  - Analysis 12 (mixed clusters): confirmed cluster 0 chip renders
+    gray (`bg-accent-gray`) and cluster 1 renders indigo
+    (`bg-accent-indigo`) in the same table, not just cluster 2's amber.
+  - No `pageerror`/console errors in any case (StrictMode is on in
+    `main.jsx`, so this also covers the double-invoke path).
+
+## Phase 4.2.2b — Results page matched to mockup + backend wording + real fixture
+
+- `src/styles/tokens.css`: added one new token, `--color-table-header:
+  #211F1C` (the results table's header-row background, pixel-sampled
+  off `docs/mockups/results.png` -- distinct from `--color-surface`,
+  which every other part of the card uses). Everything else reused
+  existing tokens (`--color-row-highlight` turned out to already match
+  the mockup's active-pagination-button fill almost exactly, so no new
+  token was needed there).
+- `src/components/results/ResultsTable.jsx`: rebuilt as a single
+  `table-fixed` table with a `<colgroup>` (10/18/25/40/7%, so Archetype
+  is wide and the chevron column is narrow, per the mockup) instead of
+  an auto-layout table. Header row gets `bg-table-header`; `divide-x
+  divide-line` on every `<tr>` draws the vertical column dividers the
+  mockup has. "Rank" and "Suspicion score" headers are now `<button>`s
+  inside their `<th>` with a small stacked up/down arrow (new
+  `SortIcon` in `src/components/icons.jsx`) and `aria-sort` on the
+  `<th>` itself. Whole-row click: `<tr onClick>` calls `useNavigate()`
+  unless the click landed on the row's `<a>` (`event.target.closest
+  ('a')`, since that link already navigated) or is the tail end of a
+  text selection (`window.getSelection().toString().length > 0`);
+  `cursor-pointer` on the row makes this discoverable, and the
+  existing Player ID `<Link>` remains the one keyboard/screen-reader
+  path into a player's page.
+- `src/pages/ResultsPage.jsx`: added `sort` state (`{key, dir}`,
+  default `{rank, asc}`) and `handleSort()` (click same key -> flip
+  `dir`; click a different key -> `asc`; always resets `page` to 1,
+  same as a query change). The sorted list is derived at render
+  (`[...tableSource].sort(...)`), never stored -- `tableSource` itself
+  is unchanged (ranks 4+, or search matches, exactly as before).
+  Search row + table + "Showing a-b of N" + `Pagination` are now one
+  `rounded-lg border border-line bg-surface overflow-hidden` card,
+  with `border-b`/`border-t border-line` dividers between the three
+  sections (previously the search box and the table were two separate
+  bordered boxes).
+- `src/components/results/Podium.jsx`: content changed from
+  `text-center` (with `mx-auto` on the score bar) to left-aligned, per
+  the mockup -- rank badge, player id, score, bar, chip and "View
+  details ->" all now read top-to-bottom flush left inside each card.
+  The #1 card's extra size/raise/`border-podium` styling from Phase
+  4.2.2 was already correct and is unchanged.
+- `src/components/ArchetypeChip.jsx`: added `whitespace-nowrap`
+  (chips never wrapped before, but nothing stopped it) and a length
+  check -- archetype names over 18 characters (e.g. "Precise,
+  Low-Volume Shooter") render at `text-xs` instead of `text-sm` so they
+  still fit on one line in a podium card or table cell.
+- `src/components/results/Pagination.jsx`: buttons shrunk from `h-8
+  w-8` (32px) to `h-7 w-7` (28px, matches the mockup); the window
+  widened from `{current-1, current, current+1}` to `{current-2 ..
+  current+2}` (still anchored to page 1 and the last page), e.g.
+  current=2 of 14 now renders "1 [2] 3 4 5 ... 14" instead of the
+  narrower "1 [2] 3 ... 14" Phase 4.2.2 shipped. The active page
+  button now also fills with `bg-row-highlight` (on top of the
+  existing `border-pagination-active-border`) to match the mockup's
+  visibly-filled current-page box.
+- `src/components/results/ResultsSkeleton.jsx`: touched up to loosely
+  mirror the new layout (left-aligned podium placeholders, row
+  placeholders inside a bordered card) -- not spec'd, but left
+  mismatched with the real layout would have been a visible flash on
+  load.
+- Backend wording (`backend/api/routes/{history,player,clusters}.py`)
+  -- only the `fix` string of each `api_error(...)` call changed (the
+  `message` strings already had no API/dev terms); `message` strings
+  are unchanged:
+  | file | code | fix before | fix after |
+  |---|---|---|---|
+  | history.py | `analysis_not_found` | "Pick an analysis from GET /api/v1/history, or upload the CSV again." | "Open History to pick an analysis, or upload the CSV again." |
+  | player.py | `analysis_not_found` | "Pick an analysis from GET /api/v1/history, or upload the CSV again." | "Open History to pick an analysis, or upload the CSV again." |
+  | player.py | `player_not_found` | "Check the player_id against the players listed in GET /api/v1/history/{analysis_id}." | "Go back to the results list for this analysis and pick a player from there." |
+  | clusters.py | `no_analyses` | "Upload a CSV via POST /api/v1/analyze first." | "Upload a CSV to create your first analysis." |
+  | clusters.py | `analysis_not_found` | "Pick an analysis from GET /api/v1/history, or upload the CSV again." | "Open History to pick an analysis, or upload the CSV again." |
+- Realistic fixture: `backend/data/features_hybrid.csv` (12,000 rows,
+  10,000 legit / 2,000 cheater, matching `X_train.npy` + `X_test.npy`
+  = 9,600 + 2,400 = 12,000 exactly) is the real per-player feature
+  table `core/model.py`'s `FEATURE_ORDER` and the deployed models were
+  trained/tested on -- confirmed against `backend/api/routes/
+  analyze.py`'s own docstring ("the 11 hybrid feature columns"). Wrote
+  `real_sample_124.csv` (`pandas.sample(n=124, random_state=42)`,
+  `FEATURE_ORDER` columns only, `player_id` = `r0`..`r123`) to
+  `argus-upload-fixtures2-OQbIOz\`, then `POST /api/v1/analyze`'d it
+  -- new `analysis_id = 18`. Scores did **not** saturate this time:
+  `ensemble_score` min 0.394, median 0.504, max 0.883 (flagged_count
+  65 of 124); cluster sizes 54 (cluster 0, "Average Player"), 42
+  (cluster 1, "Precise, Low-Volume Shooter"), 28 (cluster 2,
+  "High-Volume, Erratic Shooter"). This is a real, non-degenerate
+  score spread -- unlike the earlier `valid_5000.csv` fixture (Phase
+  4.2.2, analysis 17) which landed almost entirely in one cluster
+  near 1.0, this one exercises all three archetypes and a wide score
+  range, which is what made it useful for checking chip-colour and
+  sort-order rendering below.
+- Verified: `npm run build` and `npm run lint` (oxlint) both clean;
+  `grep -rnoE '#[0-9a-fA-F]{3,8}\b' frontend/src | grep -v
+  tokens.css` empty. Backend running throughout (`GET /health` ok
+  first). Dev server at `:5173` driven with a scratch Playwright
+  script (not committed) against analysis 18:
+  - Podium: 3 cards: #2 and #3 both 256x257px at y=217; #1 (centre)
+    288x279px at y=195 -- confirms #1 is both wider/taller and raised
+    (smaller y = higher on screen) relative to #2/#3, which sit
+    bottom-aligned with each other.
+  - Table: 9 rows on page 1 (`PAGE_SIZE`). Clicking the "Suspicion
+    score" header set `aria-sort="ascending"` and moved rank 124 (the
+    lowest score in the dataset) to the first row; a second click set
+    `aria-sort="descending"`.
+  - Whole-row click: clicked the chevron cell (not the Player ID link)
+    on row 1 and landed on `/results/18/player/r100` -- confirms the
+    row, not just the link, is the hit target.
+  - Pagination: clicking page 2 showed "Showing 10-18 of 121" (124
+    total minus the 3 podium players); the active page button's class
+    list included both `border-pagination-active-border` and
+    `bg-row-highlight`.
+  - No `pageerror`/console errors.
+  - A full-page screenshot was also taken and eyeballed against
+    `docs/mockups/results.png` -- card layout, left-aligned podium
+    content, header-row shading, column proportions and the
+    "1 [2] 3 4 5 ... 14" pagination window all matched.

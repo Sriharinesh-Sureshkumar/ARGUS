@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom'
 
 import { uploadCsv } from '../api/analyze.js'
 import { normalizeError } from '../api/client.js'
+import ErrorPanel from '../components/ErrorPanel.jsx'
 import DropZone from '../components/upload/DropZone.jsx'
 import ProcessingSkeleton from '../components/upload/ProcessingSkeleton.jsx'
-import UploadError from '../components/upload/UploadError.jsx'
 import UploadProgress from '../components/upload/UploadProgress.jsx'
 import { MAX_ROWS, MAX_UPLOAD_BYTES } from '../config.js'
 
@@ -118,7 +118,7 @@ export default function UploadPage() {
         {status === 'idle' && <DropZone onFileSelected={handleFileSelected} />}
         {status === 'uploading' && <UploadProgress fileName={file.name} progress={progress} />}
         {status === 'processing' && <ProcessingSkeleton />}
-        {status === 'error' && <UploadError error={error} onRetry={handleRetry} />}
+        {status === 'error' && <ErrorPanel error={error} onRetry={handleRetry} />}
       </div>
     </section>
   )

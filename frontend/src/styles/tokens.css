@@ -52,6 +52,7 @@
   --color-link: #A1B5E2;           /* "Open ->" row links */
   --color-row-highlight: #342E21;  /* table row hover / highlighted row background */
   --color-pagination-active-border: #BC9A65; /* current-page pagination button border */
+  --color-table-header: #211F1C;   /* results table header row background (results.png) */
 
   /* Fonts: Inter for UI text, JetBrains Mono for numbers/scores/ids.
      The font files are self-hosted via @fontsource (imported in main.jsx). */
