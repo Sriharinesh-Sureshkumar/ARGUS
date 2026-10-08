@@ -43,3 +43,25 @@ export function SortIcon(props) {
     </svg>
   )
 }
+
+// Circled "i" -- disclosure/explanation hint next to a card heading.
+export function InfoIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path strokeLinecap="round" d="M12 11v5.5" />
+      <circle cx="12" cy="8" r="0.75" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+// Neutral marker reused for every row in the SHAP feature list -- not
+// tied to any one feature's meaning.
+export function FeatureIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" {...props}>
+      <circle cx="12" cy="12" r="3.25" />
+      <path strokeLinecap="round" d="M12 3.5v4M12 16.5v4M3.5 12h4M16.5 12h4" />
+    </svg>
+  )
+}

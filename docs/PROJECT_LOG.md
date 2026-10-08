@@ -1258,3 +1258,233 @@ existing history.*
     `docs/mockups/results.png` -- card layout, left-aligned podium
     content, header-row shading, column proportions and the
     "1 [2] 3 4 5 ... 14" pagination window all matched.
+
+## Phase 4.2.3 — Player Detail page (score ring, SHAP explanation, UMAP scatter)
+
+- Files added: `src/api/player.js` (`getPlayer()`, same axios/error
+  shape as `history.js`); `src/components/ScoreRing.jsx` (hand-built
+  SVG arc, stroke-dasharray trick); `src/components/ClusterScatter.jsx`
+  (hand-built SVG scatter: gridlines, nice-number ticks, deterministic
+  downsample to 1500, legend); `src/components/Collapsible.jsx` (the
+  shared disclosure button used by "See model breakdown" and "Raw
+  feature values"); `src/components/InfoDisclosure.jsx` (the small
+  "(i)" tooltip toggle); `src/lib/shap.js` (`splitPlainDescription()`);
+  `src/components/player/{ShapCard,RawFeatureTable,
+  PlayerDetailSkeleton}.jsx`; full rebuild of
+  `src/pages/PlayerDetailPage.jsx` (stub removed). `src/lib/clusters.js`
+  gained a third `fill: 'fill-cluster-*'` key per cluster (alongside
+  the existing `chipBg`/`dot`) so ClusterScatter's SVG `<circle>` dots
+  can use the same single source of truth as ArchetypeChip, since
+  Tailwind v4 only generates a utility for a colour class that appears
+  as a literal string somewhere in source -- a runtime-built
+  `` `${dot}/60` `` string wouldn't be found by its scanner, so opacity
+  for background dots is instead a plain SVG `fillOpacity={0.6}`
+  attribute, not a Tailwind modifier. `src/components/icons.jsx` gained
+  `InfoIcon` and `FeatureIcon` (the one neutral marker reused on every
+  SHAP row, per spec -- not per-feature icons like the mockup's
+  target/lightning-bolt glyphs).
+- Two independent fetches (`GET /history/{id}` for the header/
+  breakdown/scatter, `GET /player/{id}` for the SHAP card/raw
+  features/archetype description), each its own `{key, data, error}`
+  state + its own retry counter + its own `AbortController`/`ignore`
+  effect, matching the StrictMode-safe pattern from ResultsPage/
+  UploadPage. Page-level error vs. card-level error: a hard
+  `analysis_not_found`/`player_not_found` from EITHER request collapses
+  to a full-page `ErrorPanel` (`Back to upload`/`Back to results`,
+  no "Try again") since there's nothing sensible to show without a
+  matching player row; any other player-request failure (network,
+  500) stays scoped to the "Why this player ranks high" card only,
+  with its own Retry, while the header/breakdown/scatter render
+  normally from the already-successful analysis request. The header
+  also treats "analysis loaded but this player_id isn't in
+  `analysis.players`" as a continued loading state rather than a
+  broken render, so it doesn't flash before the player request's own
+  404 arrives and promotes to the page-level error.
+- Deviations from the mockup/spec text:
+  - "Model confidence: 0.72" was dropped per the rules (invented
+    field) -- the model-breakdown meta is just "11 features".
+  - `ClusterScatter`'s legend names clusters by their real
+    `archetype_name` (e.g. "Precise, Low-Volume Shooter"), not the
+    mockup's "Cluster A/B/C" lettering, since the backend has no
+    concept of cluster letters -- `cluster_id -> archetype_name` isn't
+    part of a scatter point, so points stay exactly
+    `{id, x, y, clusterId}` per spec and the page passes an extra
+    `clusterLabels` map built from `analysis.players`.
+  - The legend's own-player row reads "This player" (literal spec
+    text) rather than the mockup's "Player 4821" -- the chart's
+    highlighted dot still gets the real id label, per spec.
+  - Each SHAP row's bar is sized against the max `|shap_value|` across
+    all 11 features (per spec), not just the 5 shown.
+- Found and fixed two pre-existing backend concurrency bugs in the
+  SHAP caching path (`backend/db/crud.py`'s `get_or_compute_shap`,
+  `backend/core/explainer.py`), surfaced by actually exercising
+  `GET /player` from the frontend for the first time (it was a stub
+  before this phase) under React 18 StrictMode's deliberate double
+  effect-invoke in dev:
+  1. `explain_player()`'s `shap.KernelExplainer.shap_values()` mutates
+     the explainer's own instance state (`self.nsamplesAdded`,
+     `self.maskMatrix`) with no internal locking. Two requests for
+     *different* never-cached players running concurrently (StrictMode
+     fires the effect, cleanup aborts it client-side, then fires again
+     -- but the abandoned first request's synchronous, non-`await`ing
+     SHAP computation keeps running server-side regardless of the
+     client abort) raced on the one shared module-level `_explainer`
+     and reliably crashed with `IndexError: index 2046 is out of
+     bounds for axis 0 with size 2046` inside `addsample()` (full
+     traceback captured by running `uvicorn` in the foreground against
+     a scratch port). Fix: a `threading.Lock` in `explainer.py`
+     serializes every call into the shared explainer (a fresh
+     `background_data`-override explainer, used elsewhere, is
+     unaffected since it isn't shared).
+  2. Independently, two requests for the *same* never-cached player
+     both see an empty cache, both compute, and both commit --11 rows
+     became 22 (44 observed with three concurrent requests), silently
+     corrupting every later read of that player (not a crash, since
+     `SHAPValue` has no unique constraint on
+     `(player_id_fk, feature_name)`). Fix: `crud.py` gained a second
+     `threading.Lock` (`_shap_cache_lock`) around the WHOLE
+     check-cache / compute / write-cache sequence in
+     `get_or_compute_shap`, not just the SHAP call -- the loser now
+     waits for the winner's commit and gets a clean cache hit instead
+     of recomputing. Verified both fixes together with 2-3 concurrent
+     curl requests for fresh player ids against a scratch
+     `uvicorn --port 8001` instance (no `--reload`, so edits needed an
+     explicit restart to take effect) before re-confirming against the
+     live `:8000` dev server; cleaned up the duplicate rows a few
+     pre-fix repro attempts had left in `argus.db` for `r40`/`r54`/`r55`
+     afterward (de-duplicated by `feature_name`, keeping the
+     lowest-`id` row per feature).
+- The 11 `plain_description` strings for one player (`r100` →
+  retargeted to `r9`, analysis 18, `GET /player/r9?analysis_id=18`;
+  none of this fixture's rows carry a "(seen in ...)" tag, since
+  `real_sample_124.csv` -- Phase 4.2.2b -- has no traceability
+  columns), by `feature_rank`:
+  1. Horizontal aim-to-target distance varied by 10.82° (std dev) across the engagement
+  2. Got as close as 0.00° from the target's vertical position
+  3. Fired on 6% of ticks during the engagement
+  4. Got as close as 0.00° from the target's horizontal position
+  5. 3 sudden aim snaps detected during the engagement
+  6. Aim pitch snapped 5.7° vertically in a single tick (~15.6ms)
+  7. 57% of shots fired while aimed within 2° of the target
+  8. Aim direction changed abruptly, averaging 1.64°/tick² of horizontal jerk
+  9. Vertical aim-to-target distance varied by 2.95° (std dev) across the engagement
+  10. Aim snapped 34.4° in a single tick (~15.6ms)
+  11. Averaged 0.72° of horizontal aim movement per tick across the engagement
+
+  The "(seen in ...)" split was separately confirmed against
+  `backend/tests/fixtures/test_8_players.csv` (which does have
+  traceability columns) -- uploaded as a one-off analysis (id 19) to
+  exercise it: player p4's #1-ranked feature there is
+  `min_cv_yaw` → "Got as close as 0.00° from the target's horizontal
+  position (seen in engagement 7, at the 2.58s mark)", rendered with
+  "(seen in engagement 7, at the 2.58s mark)" split into a chip and the
+  sentence left clean -- screenshotted for a visual check alongside
+  the scatter plot and breakdown row.
+- Verified: `npm run build` and `npm run lint` (oxlint) both clean;
+  `grep -rnoE '#[0-9a-fA-F]{3,8}\b' frontend/src | grep -v
+  tokens.css` empty. Playwright against analysis 18, player `r9` (a
+  never-before-requested id, so SHAP was genuinely uncached):
+  - Header (rank/score ring/chip) visible after 0.51s, well before the
+    SHAP card resolves -- the "Computing explanation..." banner + 5
+    shimmer rows were confirmed on screen at that point. SHAP resolved
+    3.36s after navigation (first/uncached load, consistent with the
+    ~3s `explain_player()` cost measured directly against the API).
+  - Reloading the same page (now cached): header + the 5 real SHAP
+    rows both visible 0.25s after navigation.
+  - 5 SHAP rows rendered; 11 rows in the expanded "Raw feature values"
+    table.
+  - Scatter: `role="img"` `aria-label` read "Scatter plot of 124
+    players by UMAP position, clustered by archetype, with player r9
+    highlighted."; the id label "r9" rendered next to the ringed dot.
+  - Keyboard: focusing "See model breakdown" and pressing Enter
+    toggled `aria-expanded` true → false; focusing the info icon and
+    pressing Enter toggled `aria-expanded` to true and showed the
+    `role="tooltip"` popover.
+  - `/results/18/player/nope` showed the not-found `ErrorPanel` with
+    "Back to results".
+  - No `pageerror`/`console.error` on the real page in any of the
+    above. The only `console.error` observed anywhere was the browser's
+    own "Failed to load resource: 404" network log line on the
+    `/player/nope` case -- an unavoidable browser-level log for any
+    non-2xx fetch, not a JS exception, and the page itself handled that
+    404 correctly (confirmed by the "Back to results" panel rendering).
+
+## Phase 4.2.3b — Player Detail page: 4 small UI fixes
+
+- Frontend only, as asked; no backend changes. Files: `src/lib/shap.js`
+  (added `parseArchetypeDescription()`), new
+  `src/components/ArchetypeDescription.jsx`,
+  `src/components/Collapsible.jsx` (meta prop replaced), `src/components/
+  ClusterScatter.jsx` (caption added), `src/components/ScoreRing.jsx`
+  (layout changed), `src/pages/PlayerDetailPage.jsx` (wiring for all
+  three).
+- `parseArchetypeDescription()`: regex
+  `/\b(high|low)\s+([a-z][a-z0-9_]*)\s+\(([+-]\d+(?:\.\d+)?)\s*std\)/g`
+  over the real `archetype_description` text, returns
+  `{features: [{direction, feature, std}], summary}` or `null` under 2
+  matches. The summary split searches for the first `"): "` starting
+  **at** the last match's own start index (not after its end) --
+  the match itself consumes the closing `)`, so searching only the
+  text *after* the match would look for `"): "` in a string that now
+  starts with just `": "` and never find it.
+  Checked against all 3 real `archetype_description` strings pulled
+  live from `GET /player` for one player per `cluster_id` in analysis
+  18 (`r71`=cluster 0, `r103`=cluster 2, `r2`=cluster 1):
+  - Cluster 0 ("Average Player"): *"Every feature sits within ~0.16 std
+    of the population mean -- no single behavioral trait stands out.
+    The largest group (45.3% of players), representing typical/
+    baseline play."* -> **0 matches -> `null`** -- falls back to the
+    original paragraph, confirmed in the browser (screenshot).
+  - Cluster 2 ("High-Volume, Erratic Shooter"): *"Notably high
+    engagement_firing_rate (+1.04 std), high peak_yaw_delta (+0.73
+    std), and high yaw_jerk (+0.62 std), combined with low
+    fire_on_target_rate (-0.97 std): players who fire very frequently
+    with large, jerky aim swings but land a much lower share of shots
+    on target. Volume-over-precision, erratic aim play."* -> 4
+    features (engagement_firing_rate +1.04, peak_yaw_delta +0.73,
+    yaw_jerk +0.62, fire_on_target_rate -0.97), summary "players who
+    fire very frequently ... Volume-over-precision, erratic aim play."
+  - Cluster 1 ("Precise, Low-Volume Shooter"): *"Notably high
+    fire_on_target_rate (+0.86 std) combined with low
+    engagement_firing_rate (-0.84 std), low peak_yaw_delta (-0.43
+    std), and low yaw_jerk (-0.39 std): players who fire less often
+    but land a much higher share of shots on target, with smaller,
+    smoother aim adjustments. Controlled, selective, accurate play."*
+    -> 4 features (fire_on_target_rate +0.86, engagement_firing_rate
+    -0.84, peak_yaw_delta -0.43, yaw_jerk -0.39), summary "players who
+    fire less often ... Controlled, selective, accurate play."
+  `ArchetypeDescription.jsx` renders the parsed form as a `<ul>`
+  (direction capitalised + mono feature name, muted mono std value on
+  the same line) with the summary sentence below; `null` renders the
+  original `<p>` unchanged -- no palette/token changes needed either
+  way.
+- `Collapsible.jsx`: `meta` (a caller-supplied static string) replaced
+  with `featureCount` (a number); the hint is now always derived as
+  `` `${featureCount} features - Click to ${open ? 'collapse' :
+  'expand'}` ``, so both call sites ("See model breakdown", "Raw
+  feature values") get the live toggle wording for free.
+  `aria-expanded` was already correct and is unchanged.
+- `ClusterScatter.jsx`: added an optional `caption` prop (defaulting to
+  the exact sentence from the spec) rendered as a muted `text-xs` line
+  below the chart+legend row; left the "Position not available for
+  this analysis" fallback path without a caption (there's no chart
+  there to explain). Scatter data, dots, legend and the highlight ring
+  are untouched.
+- `ScoreRing.jsx`: the "Suspicion Score" caption moved from stacked
+  inside the ring (where it crowded/overflowed the lower arc at this
+  ring size) to a separate line below the ring, per the spec's stated
+  preference. Ring size, radius, stroke width and colours (`bar-track`/
+  `bar-fill` tokens) are unchanged -- only the score number is
+  centered inside the ring now.
+- Verified: `npm run build` and `npm run lint` (oxlint) both clean;
+  `grep -rnoE '#[0-9a-fA-F]{3,8}\b' frontend/src | grep -v
+  tokens.css` empty (no new tokens needed). Playwright against
+  analysis 18, players `r100` (cluster 2, parsed path) and `r71`
+  (cluster 0, fallback path): both `Collapsible`s ("See model
+  breakdown", "Raw feature values") showed "11 features - Click to
+  expand" closed and "... - Click to collapse" open, with
+  `aria-expanded` flipping correctly; the UMAP caption text was
+  present on both; the archetype bullet list rendered for `r100` and
+  was absent (plain paragraph) for `r71`, confirmed in screenshots of
+  the header card, UMAP card, and Raw feature values card both closed
+  and open. No `pageerror`/`console.error` in either case.

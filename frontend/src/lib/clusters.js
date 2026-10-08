@@ -6,12 +6,12 @@
 // all key off cluster_id (stable across analyses) rather than
 // archetype_name (free text from the backend) so they always agree.
 const CLUSTER_STYLES = {
-  0: { chipBg: 'bg-accent-gray', dot: 'bg-cluster-gray' },
-  1: { chipBg: 'bg-accent-indigo', dot: 'bg-cluster-indigo' },
-  2: { chipBg: 'bg-accent-amber', dot: 'bg-cluster-amber' },
+  0: { chipBg: 'bg-accent-gray', dot: 'bg-cluster-gray', fill: 'fill-cluster-gray' },
+  1: { chipBg: 'bg-accent-indigo', dot: 'bg-cluster-indigo', fill: 'fill-cluster-indigo' },
+  2: { chipBg: 'bg-accent-amber', dot: 'bg-cluster-amber', fill: 'fill-cluster-amber' },
 }
 
-const FALLBACK_STYLE = { chipBg: 'bg-accent-gray', dot: 'bg-cluster-gray' }
+const FALLBACK_STYLE = { chipBg: 'bg-accent-gray', dot: 'bg-cluster-gray', fill: 'fill-cluster-gray' }
 
 // Falls back to the gray/"Average" styling for a cluster_id outside the
 // trained set (e.g. null/undefined, or a future retrain with a
