@@ -1488,3 +1488,309 @@ existing history.*
   was absent (plain paragraph) for `r71`, confirmed in screenshots of
   the header card, UMAP card, and Raw feature values card both closed
   and open. No `pageerror`/`console.error` in either case.
+
+## Phase 4.2.4a — Read-only contract check: GET /api/v1/clusters
+
+- No files edited except this entry, per the task. Read
+  `backend/api/routes/clusters.py` + the `ArchetypeSummary`/
+  `ClusterPoint`/`ClusterResponse` schemas in `backend/api/schemas.py`,
+  then called the live backend (already running on :8000).
+- Query params: exactly one, `analysis_id: int | None` (optional,
+  default `None`). Omitted -> the most recently *created* analysis
+  (`ORDER BY created_at DESC` first row) is used, confirmed live: the
+  no-param call and `?analysis_id=18` returned byte-identical bodies,
+  since 18 is currently the newest analysis. No other params exist
+  (no pagination, no cluster_id filter).
+- Full JSON shape (`GET /clusters?analysis_id=18`, live, players
+  truncated to 3 of 124):
+  ```json
+  {
+    "analysis_id": 18,
+    "archetypes": [
+      {"cluster_id": 0, "archetype_name": "Average Player", "player_count": 54, "avg_ensemble_score": 0.5184389687583895, "cheater_pct_in_training": 9.54, "colour": "#4C72B0"},
+      {"cluster_id": 1, "archetype_name": "Precise, Low-Volume Shooter", "player_count": 42, "avg_ensemble_score": 0.5113153712813586, "cheater_pct_in_training": 16.93, "colour": "#DD8452"},
+      {"cluster_id": 2, "archetype_name": "High-Volume, Erratic Shooter", "player_count": 28, "avg_ensemble_score": 0.583618611813047, "cheater_pct_in_training": 10.03, "colour": "#55A868"}
+    ],
+    "players": [
+      {"player_id": "r71", "umap_x": 4.6639204025268555, "umap_y": 7.3540825843811035, "cluster_id": 0, "archetype_name": "Average Player", "ensemble_score": 0.8827570203947708, "rank": 1},
+      {"player_id": "r103", "umap_x": 10.035974502563477, "umap_y": 4.24987268447876, "cluster_id": 2, "archetype_name": "High-Volume, Erratic Shooter", "ensemble_score": 0.8015189596806839, "rank": 2},
+      {"player_id": "r2", "umap_x": -1.5416840314865112, "umap_y": 6.514909744262695, "cluster_id": 1, "archetype_name": "Precise, Low-Volume Shooter", "ensemble_score": 0.7648321658328319, "rank": 3}
+    ]
+  }
+  ```
+  (`archetypes` had exactly 3 entries total -- the full list, not
+  truncated; `player_count` sums to 124, matching `players.length`.)
+- Per-cluster counts (`player_count`), average ensemble score
+  (`avg_ensemble_score`) and `archetype_name` are all returned. A
+  per-cluster **description is NOT returned** -- `ArchetypeSummary` has
+  no such field, and the route's own `entry.get(...)` calls only pull
+  `archetype_name`/`cheater_pct` out of `archetype_names.json`, never
+  `description`, even though that same dict (loaded two lines earlier
+  via `load_clustering_artifacts()`) already has it for every cluster
+  (confirmed by reading `backend/trained_models/archetype_names.json`
+  directly -- all 3 entries carry a `description` string, the same
+  text `GET /player/{id}` surfaces per-player as
+  `archetype_description`).
+- Per-player points ARE returned, not just summaries: every player in
+  the analysis (124 for id 18), each with `player_id`, `umap_x`,
+  `umap_y`, `cluster_id`, `ensemble_score` (plus bonus
+  `archetype_name`/`rank`) -- a full array, not samples.
+- Scope: one analysis per call (`analysis_id`, defaulting to the
+  latest), never all analyses combined. A nonexistent-but-well-formed
+  id (`?analysis_id=999999`, live-tested) returns 404
+  `analysis_not_found`. An **empty DB** was *not* live-tested (would
+  mean wiping the real `argus.db` for a read-only task) -- confirmed
+  by code inspection instead: `get_clusters()` queries for the latest
+  `Analysis` row when `analysis_id` is omitted, and if `latest is
+  None` it raises exactly `api_error(404, "no_analyses", ...)`, i.e.
+  the expected behaviour.
+- Point 4 (what the frontend must derive elsewhere): `/clusters`
+  already supplies everything needed for a Clusters page's scatter +
+  per-archetype legend/stat cards (points, counts, avg score, names)
+  **except the archetype description**. That gap can't be closed by
+  `GET /history/{id}` either -- its `PlayerSummary`/`AnalysisResponse`
+  schemas (`backend/api/schemas.py`) have no `archetype_description`
+  field at all (checked during Phase 4.2.3). The only endpoint that
+  currently returns that text is `GET /player/{id}`, and only for one
+  player at a time (triggering a multi-second SHAP computation on a
+  cache miss), which is not a reasonable way to fetch 3 cluster-level
+  descriptions. If a Clusters page needs the description text, it is
+  **not derivable from any existing read-only endpoint** -- the clean
+  fix is a backend change (out of scope here) to add
+  `archetype_description: str` to `ArchetypeSummary` in
+  `clusters.py`/`schemas.py`, reading `entry.get("description")` from
+  the `archetype_names` dict the route already has in memory.
+
+## Phase 4.2.4b — Clusters page (scatter + per-archetype cards)
+
+- **Backend (Step 1, exactly the gap 4.2.4a identified)**:
+  `ArchetypeSummary` gained `archetype_description: str`
+  (`backend/api/schemas.py`); `clusters.py` fills it from the same
+  `entry.get("description")` the route already had loaded, one line
+  next to the existing `entry.get("archetype_name", ...)` call. No
+  other field changed. Restarted (`--reload` picked it up) and
+  re-verified `GET /clusters?analysis_id=18`: all 3 archetypes now
+  carry `archetype_description`, every other field byte-identical to
+  the Phase 4.2.4a capture.
+  - `analysis_id=12` (only clusters 0/1 populated, 8 players total):
+    `archetypes` has **exactly 2 entries** -- cluster 2 is not present
+    with `player_count: 0`, it is **absent from the array entirely**.
+    `by_cluster` (a `defaultdict(list)`) is only ever populated by
+    iterating this analysis's actual `Player` rows, so a cluster with
+    no members here never gets a key at all. This matters for the
+    frontend: it cannot just map over `archetypes` and expect 3 cards.
+- Files added: `frontend/src/api/clusters.js` (`getClusters()`);
+  `frontend/src/lib/dates.js` (`formatAnalysisDate()`, extracted out of
+  `ResultsHeader.jsx` so `ClustersPage` doesn't duplicate the
+  naive-datetime-needs-a-"Z" fix -- `ResultsHeader.jsx` now imports it,
+  behaviour unchanged); `frontend/src/components/clusters/
+  {ArchetypeCard,ClustersSkeleton}.jsx`; full rebuild of
+  `frontend/src/pages/ClustersPage.jsx` (stub removed).
+  `frontend/src/components/ClusterScatter.jsx` extended (same file,
+  still used as-is by `PlayerDetailPage`): points may now carry an
+  optional `score`; new optional props `onPointClick` (enables
+  hover/click on every dot -- hover shows a "Player id - score n.nn"
+  tooltip via an absolutely-positioned HTML overlay using percentage
+  coordinates derived from the same `scaleX`/`scaleY` the SVG uses, so
+  it tracks the viewBox regardless of rendered size) and
+  `focusedClusterId` (dims every dot outside that cluster to
+  `fillOpacity 0.12`, a pure render-time filter over already-fetched
+  points -- no new fetch). `MAX_BACKGROUND_POINTS` is now exported so
+  `ClustersPage` can compute its own "Showing N of M players" line
+  from the same constant rather than a second hardcoded `1500`.
+- Route `/clusters` reads `?analysis=<id>` via `useSearchParams` (not
+  `useParams` -- the route itself takes no path param); omitted means
+  the backend's own default (latest). Same state-machine pattern as
+  ResultsPage: `result` keyed by request key, `AbortController`/
+  `ignore` per effect, loading/error/ready derived from comparing keys
+  (StrictMode-safe). `focusedClusterId` resets to `null` when the
+  request key changes (new analysis), via the same "adjusting state
+  during render" pattern Results/PlayerDetail already use.
+- Three cards are always rendered, in `cluster_id` order 0/1/2 (`k=3`,
+  fixed by training) -- not "however many `archetypes` has," because
+  of the analysis-12 finding above. For a `cluster_id` missing from the
+  live response, the card is synthesized locally: `player_count: 0`,
+  avg score renders "-", `archetype_description` falls back to "No
+  players in this cluster for this analysis.", and the archetype name
+  falls back to "Cluster `<id>`" -- deliberately reusing the backend's
+  **own** fallback string (`clusters.py`: `entry.get("archetype_name",
+  f"Cluster {cid}")`) rather than inventing a name the frontend can't
+  actually verify. The training-data line is only rendered when real
+  `cheater_pct_in_training` data exists, so the synthesized card has no
+  training line at all (nothing to show).
+  `ArchetypeChip` (already cluster_id-keyed via `lib/clusters.js`)
+  supplies every colour; the backend's `colour` hex field is never
+  read anywhere in `ClustersPage`/`ArchetypeCard` (hex-grep confirms no
+  new hex and `archetypes[].colour` is simply unused).
+  Share = `player_count / total_players_in_analysis * 100`, 1 decimal.
+  Spread check: `max(avg_ensemble_score) - min(avg_ensemble_score)`
+  over only the clusters actually present (a synthesized 0-player card
+  has no real score to compare) -- analysis 18's spread was
+  `0.584 - 0.511 = 0.073`, well under the 0.15 threshold, so both
+  sentences render ("Archetypes describe playing style, not guilt.
+  Average suspicion scores are similar across clusters."); verified
+  live, not assumed.
+- Card = a `<button aria-pressed>` wrapping the whole card (not just an
+  icon/label inside it); clicking toggles `focusedClusterId` (click the
+  already-focused card again to clear), passed straight through to
+  `ClusterScatter`. `InfoDisclosure` ("This is a statistic from the
+  training dataset...") sits next to a small "Archetypes" section
+  label above the three cards, not on any individual card.
+- Error states match the spec's literal action labels: `no_analyses`
+  -> "Back to upload" (the `fix` text itself, already "Upload a CSV to
+  create your first analysis.", needed no new wording -- Phase
+  4.2.2b/4.2.4a already put it there); `analysis_not_found` -> "Open
+  history"; anything else -> the standard Retry button bumping
+  `retryKey`. All three live-tested (`?analysis=999999` -> "Open
+  history" panel, confirmed by screenshot).
+- Deviations from the mockup:
+  - Header text is "Behaviour clusters" / "Analysis #<id> - <filename>
+    - <date>" per the written spec, not the mockup's "Player
+    archetypes" / "Groups of players with similar behaviour."
+  - The mockup's legend reads "Cluster A/B/C" with a one-line
+    description per letter; this build has no such per-letter concept
+    in the data model, so the scatter's own legend (unchanged from
+    Phase 4.2.3) shows the real `archetype_name` instead, and the
+    one-line descriptions live on the cards (from `archetype_description`,
+    not invented for the legend).
+  - Minor layout gap: the archetype-cards column is naturally taller
+    than the scatter card (3 cards' worth of description text vs. one
+    chart), so there's visible empty space under the chart at common
+    viewport heights even after bumping the scatter's `height` prop to
+    520 -- true equal-height columns would need the chart to resize to
+    fill whatever height the card grid gives it, which wasn't
+    attempted (not asked for, and `ClusterScatter`'s viewBox approach
+    doesn't currently support a fill-available-height mode).
+  - Player-count share and the "similar scores" sentence-drop logic
+    are both real computed values not present in the mockup at all
+    (the mockup has static numbers), per the task's "real data
+    replaces all mockup numbers."
+- Verified: `npm run build` and `npm run lint` (oxlint) both clean;
+  `grep -rnoE '#[0-9a-fA-F]{3,8}\b' frontend/src | grep -v
+  tokens.css` empty (no new tokens, backend `colour` hex values never
+  touch the frontend). Playwright, backend running throughout:
+  - `/clusters` (latest, no param): loaded in 0.3s, resolved to
+    analysis 18 (the newest), subtitle "Analysis #18 -
+    real_sample_124.csv - 8 Oct 2026".
+  - `/clusters?analysis=18`: 3 cards (54/43.5%/0.52,
+    42/33.9%/0.51, 28/22.6%/0.58 -- shares sum to 100.0%); hovering a
+    background dot showed "Player r5 - score 0.47" with a ring on the
+    dot; clicking card 0 set `aria-pressed="true"` and visibly dimmed
+    the other two clusters' dots in the screenshot, a second click
+    returned `aria-pressed="false"`; clicking a dot navigated to
+    `/results/18/player/r80`; reloading `/clusters?analysis=18`
+    (state lives entirely in the URL, not component state) still
+    showed the same analysis afterward.
+  - `/clusters?analysis=12`: 2 real cards (1/12.5%/0.51,
+    7/87.5%/0.51) plus the synthesized "Cluster 2" card (0 players,
+    "-" avg score, no training line, the "No players..." fallback
+    text) -- confirmed by screenshot.
+  - `/clusters?analysis=999999`: "Open history" error panel.
+  - No `pageerror`/real `console.error` in any case -- the only
+    `console.error` logged anywhere was the browser's own unavoidable
+    "404 Not Found" resource-load line for the bad analysis id (same
+    as every prior phase's not-found case), not a JS exception.
+
+## Phase 4.2.4c — Archetype cards restructured to match the mockup
+
+- Frontend only, no backend/data/scatter/focus-toggle/state changes,
+  as asked. Files: `frontend/src/components/clusters/ArchetypeCard.jsx`
+  (rewritten), `frontend/src/pages/ClustersPage.jsx` (removed the
+  section-level "Archetypes" heading + `InfoDisclosure` -- that
+  disclosure now lives per-card next to each card's own training-data
+  line, so the section-level copy was a redundant duplicate; gap
+  between cards `gap-4` -> `gap-3`), `frontend/src/components/
+  Collapsible.jsx` (`featureCount` prop replaced with a generic
+  `hintPrefix` -- `"11 features - Click to expand"` when given, plain
+  `"Click to expand"` when omitted, needed for this card's "What
+  defines this cluster" hint which has no count prefix at all),
+  `frontend/src/pages/PlayerDetailPage.jsx` (its two `Collapsible`
+  call sites updated to the renamed prop, `hintPrefix="11 features"`,
+  behaviour identical), `frontend/src/lib/shap.js` (added
+  `getShortArchetypeSummary()`).
+- `getShortArchetypeSummary(description)`: reuses
+  `parseArchetypeDescription`'s `summary` when it parses (else the
+  whole description), then takes just the first sentence via
+  `/\.(?:\s+(?=[A-Z])|\s*$)/` -- a period is only a sentence boundary
+  if it's followed by whitespace-then-a-capital-letter, or it's the
+  end of the string, so "~0.16 std" and "45.3%" (no capital letter
+  directly after their nearby periods/percent signs) are never
+  mistaken for a sentence end -- then capitalises the first letter.
+  Verified against all 3 real descriptions (analysis 18) before wiring
+  it into the UI (node one-liner against the same regex), and the
+  results below are the real `getShortArchetypeSummary()` return
+  values, not hand-written text:
+  - Cluster 0 (Average Player): "Every feature sits within ~0.16 std
+    of the population mean -- no single behavioral trait stands out."
+  - Cluster 1 (Precise, Low-Volume Shooter): "Players who fire less
+    often but land a much higher share of shots on target, with
+    smaller, smoother aim adjustments."
+  - Cluster 2 (High-Volume, Erratic Shooter): "Players who fire very
+    frequently with large, jerky aim swings but land a much lower
+    share of shots on target."
+  Rendered with Tailwind's built-in `line-clamp-2` -- for cluster 0
+  specifically the full first sentence is still longer than 2 lines
+  fit at this card width, so the browser's own ellipsis additionally
+  truncates it visually; that's the intended "at most 2 lines"
+  behaviour, not a second, separate truncation step.
+- Card structure is now a `<div>` (not a `<button>`) containing two
+  siblings: a `<button aria-pressed>` wrapping the colour dot + bold
+  name + short description + the two-column players/avg-score stats
+  (this is the whole focus-toggle hit target, replacing the
+  `ArchetypeChip` pill the mockup doesn't use here), and, below it, a
+  `Collapsible` ("What defines this cluster") holding "Defined from
+  training data", the existing `ArchetypeDescription` (bullets +
+  summary, or the paragraph fallback -- unchanged from Phase 4.2.3b),
+  and "In training data: X% labelled cheaters" + `InfoDisclosure`.
+  Putting the `Collapsible` inside the `<button>` would be invalid
+  HTML (a button can't contain another button) and would also make
+  the Collapsible's own click bubble up and toggle the card's focus --
+  confirmed live that it does not: expanding "What defines this
+  cluster" left `aria-pressed` on the focus button completely
+  unchanged in both directions.
+  The empty-cluster placeholder card (Phase 4.2.4b's synthesized
+  "Cluster `<id>`", 0 players) renders the button face only -- no
+  description line, no training line, and **no** `Collapsible` at all,
+  since there is nothing real to show inside it.
+  Selected-state styling combines `border-pagination-active-border`
+  with `bg-row-highlight` on the outer `<div>` -- the same pairing
+  Pagination's active-page button already uses (Phase 4.2.2b), not a
+  new convention.
+- Stat numbers ("54", "0.52", ...) use `text-primary-button`
+  (`#F8E0BA`) -- pixel-sampled off `docs/mockups/clusters.png`'s
+  number glyphs (brightest pixels in that region landed at ~(248, 231,
+  195) and ~(254, 238, 204), both closest to this existing token of
+  the three candidates compared against `bar-fill`/`nav-active`); no
+  new token added.
+- Verified: `npm run build`/`lint` (oxlint) clean;
+  `grep -rnoE '#[0-9a-fA-F]{3,8}\b' frontend/src | grep -v
+  tokens.css` empty. Playwright against `?analysis=18` and
+  `?analysis=12`, screenshots of the card column collapsed and with
+  one card expanded:
+  - Card-focus toggle still works (`aria-pressed` false -> true ->
+    false across two clicks), and the scatter still dims the other two
+    clusters while a card is focused (unchanged from 4.2.4b, confirmed
+    again in the expanded screenshot).
+  - Expanding "What defines this cluster" does **not** toggle focus
+    (`aria-pressed` stayed `true` across the expand click in the
+    focused-card test).
+  - No nested interactive elements: `document.querySelectorAll
+    ("button")` filtered for any button containing another
+    button/a/input/select/textarea returned **0** matches.
+  - Keyboard Tab order is sensible: nav links -> "View ranked results"
+    -> card 0's focus button -> card 0's details button -> card 1's
+    focus button -> card 1's details button -> card 2's focus button
+    -> card 2's details button -> wraps to the next page (the
+    `InfoDisclosure` buttons inside a collapsed `Collapsible` aren't in
+    the tab order at all, since that whole subtree isn't rendered
+    while collapsed -- expected, not a gap).
+  - `?analysis=12`: exactly 2 "What defines this cluster" buttons
+    exist in the DOM (not 3) -- confirms the empty "Cluster 2" card
+    renders no details section, per spec.
+  - No `pageerror`/console errors in any run.
+- Not pursued: the task said "if the scatter card is shorter, leave
+  it, do not stretch anything" -- the compact redesign closed most of
+  the height gap between the two columns on its own (confirmed in the
+  `?analysis=18` screenshot), so the Phase 4.2.4b `height={520}`
+  override on `ClusterScatter` (added purely to shrink that gap) was
+  removed in favour of the component's own default.

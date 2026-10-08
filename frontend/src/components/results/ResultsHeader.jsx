@@ -1,18 +1,7 @@
 import { Link } from 'react-router-dom'
 
+import { formatAnalysisDate } from '../../lib/dates.js'
 import { BackArrowIcon } from '../icons.jsx'
-
-const dateFormatter = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-
-// created_at comes back from the backend with no timezone suffix (e.g.
-// "2026-10-07T05:58:15.013581" -- see docs/PROJECT_LOG.md Phase
-// 4.2.2), because db/models.py stores it as a naive DateTime despite
-// writing datetime.now(timezone.utc). Append "Z" so the browser parses
-// it as UTC instead of local time.
-function formatCreatedAt(createdAt) {
-  const iso = createdAt.endsWith('Z') ? createdAt : `${createdAt}Z`
-  return dateFormatter.format(new Date(iso))
-}
 
 // meta is the matching HistoryItem from GET /history (null if that
 // list failed to load, or had no entry for this analysis_id) -- the
@@ -20,7 +9,7 @@ function formatCreatedAt(createdAt) {
 // itself doesn't return them.
 export default function ResultsHeader({ analysisId, playerCount, meta }) {
   const title = meta?.csv_filename || `Analysis #${analysisId}`
-  const formattedDate = meta ? formatCreatedAt(meta.created_at) : null
+  const formattedDate = meta ? formatAnalysisDate(meta.created_at) : null
 
   return (
     <div>

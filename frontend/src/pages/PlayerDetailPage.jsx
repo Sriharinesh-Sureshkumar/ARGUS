@@ -176,7 +176,7 @@ export default function PlayerDetailPage() {
         </div>
 
         <div className="mt-6 border-t border-line pt-4">
-          <Collapsible summary="See model breakdown" featureCount={11}>
+          <Collapsible summary="See model breakdown" hintPrefix="11 features">
             <div className="flex flex-wrap gap-8">
               <ScoreStat label="Ensemble score" value={matchedPlayer.ensemble_score} />
               <ScoreStat label="Isolation Forest score" value={matchedPlayer.if_score} />
@@ -220,7 +220,7 @@ export default function PlayerDetailPage() {
 
       {playerData && (
         <div className="mt-6 rounded-lg border border-line bg-surface p-6">
-          <Collapsible summary="Raw feature values" featureCount={11}>
+          <Collapsible summary="Raw feature values" hintPrefix="11 features">
             <RawFeatureTable shapValues={playerData.shap_values} />
           </Collapsible>
         </div>

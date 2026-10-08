@@ -3,12 +3,13 @@ import { useState } from 'react'
 import { ChevronRightIcon } from './icons.jsx'
 
 // Shared disclosure row: a button (chevron + summary text on the
-// left, "<N features> - Click to expand/collapse" on the right,
+// left, "[hintPrefix - ]Click to expand/collapse" on the right,
 // derived from open state so every usage stays in sync with it) that
 // toggles its children. Collapsed by default unless defaultOpen is set.
-export default function Collapsible({ summary, featureCount, defaultOpen = false, children }) {
+export default function Collapsible({ summary, hintPrefix, defaultOpen = false, children }) {
   const [open, setOpen] = useState(defaultOpen)
-  const hint = `${featureCount} features - Click to ${open ? 'collapse' : 'expand'}`
+  const action = `Click to ${open ? 'collapse' : 'expand'}`
+  const hint = hintPrefix ? `${hintPrefix} - ${action}` : action
 
   return (
     <div>

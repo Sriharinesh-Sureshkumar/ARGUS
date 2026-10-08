@@ -1,6 +1,8 @@
+import { useState } from 'react'
+
 import { getClusterStyle } from '../lib/clusters.js'
 
-const MAX_BACKGROUND_POINTS = 1500
+export const MAX_BACKGROUND_POINTS = 1500
 const MARGIN = { top: 12, right: 16, bottom: 40, left: 48 }
 
 // Deterministic (not random) downsample: every Nth point by array
@@ -40,9 +42,15 @@ const DEFAULT_CAPTION =
   'UMAP 1 and UMAP 2 are the two axes of a 2-D map of player behaviour. Players close together behave similarly. ' +
   "The axes have no units or fixed meaning (they are not 'more aggressive' or 'more accurate')."
 
-// points: [{id, x, y, clusterId}]. clusterLabels: optional {clusterId
-// -> archetype_name} for the legend (points themselves stay minimal,
-// per spec). highlightId marks one point with a ring + id label.
+// points: [{id, x, y, clusterId, score?}]. clusterLabels: optional
+// {clusterId -> archetype_name} for the legend. highlightId marks one
+// point with a ring + id label (PlayerDetailPage). onPointClick (if
+// given) makes every dot clickable/hoverable: hover shows a
+// "Player <id> - score <n>" tooltip (score must be present on that
+// point) and a focus ring; click calls onPointClick(point)
+// (ClustersPage: card click-to-navigate). focusedClusterId (if given)
+// dims every dot NOT in that cluster -- purely a render-time filter on
+// already-fetched points, no new data.
 export default function ClusterScatter({
   points,
   highlightId,
@@ -50,7 +58,11 @@ export default function ClusterScatter({
   width = 640,
   height = 360,
   caption = DEFAULT_CAPTION,
+  onPointClick,
+  focusedClusterId = null,
 }) {
+  const [hoveredId, setHoveredId] = useState(null)
+
   const valid = points.filter((p) => p.x != null && p.y != null)
 
   if (valid.length === 0) {
@@ -81,12 +93,15 @@ export default function ClusterScatter({
 
   const clusterIds = [...new Set(valid.map((p) => p.clusterId))].sort((a, b) => a - b)
 
+  const hovered = onPointClick ? shown.find((p) => p.id === hoveredId) : null
+
   return (
     <div>
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+        <div className="relative flex-1">
         <svg
           viewBox={`0 0 ${width} ${height}`}
-          className="h-auto w-full flex-1"
+          className="h-auto w-full"
           role="img"
           aria-label={
             highlighted
@@ -157,16 +172,34 @@ export default function ClusterScatter({
           </text>
 
           {/* Background points */}
-          {shown.map((p) => (
+          {shown.map((p) => {
+            const dimmed = focusedClusterId != null && p.clusterId !== focusedClusterId
+            return (
+              <circle
+                key={p.id}
+                cx={scaleX(p.x)}
+                cy={scaleY(p.y)}
+                r="3.5"
+                fillOpacity={dimmed ? 0.12 : 0.6}
+                className={`${getClusterStyle(p.clusterId).fill} ${onPointClick ? 'cursor-pointer' : ''}`}
+                onMouseEnter={onPointClick ? () => setHoveredId(p.id) : undefined}
+                onMouseLeave={onPointClick ? () => setHoveredId((id) => (id === p.id ? null : id)) : undefined}
+                onClick={onPointClick ? () => onPointClick(p) : undefined}
+              />
+            )
+          })}
+
+          {/* Hover ring */}
+          {hovered && (
             <circle
-              key={p.id}
-              cx={scaleX(p.x)}
-              cy={scaleY(p.y)}
-              r="3.5"
-              fillOpacity={0.6}
-              className={getClusterStyle(p.clusterId).fill}
+              cx={scaleX(hovered.x)}
+              cy={scaleY(hovered.y)}
+              r="7"
+              fill="none"
+              strokeWidth="2"
+              className="pointer-events-none stroke-content"
             />
-          ))}
+          )}
 
           {/* Highlighted player */}
           {highlighted && (
@@ -195,6 +228,20 @@ export default function ClusterScatter({
             </g>
           )}
         </svg>
+
+        {hovered && hovered.score != null && (
+          <div
+            className="pointer-events-none absolute -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-line bg-tooltip-bg px-3 py-1.5 text-xs text-content shadow-lg"
+            style={{
+              left: `${(scaleX(hovered.x) / width) * 100}%`,
+              top: `${(scaleY(hovered.y) / height) * 100}%`,
+              marginTop: -10,
+            }}
+          >
+            Player {hovered.id} - score {hovered.score.toFixed(2)}
+          </div>
+        )}
+        </div>
 
         <ul className="flex shrink-0 flex-col gap-3 text-sm sm:w-48">
           {clusterIds.map((cid) => (

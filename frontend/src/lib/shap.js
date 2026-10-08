@@ -40,3 +40,32 @@ export function parseArchetypeDescription(text) {
 
   return { features, summary }
 }
+
+// First sentence only: split on ". " followed by a capital letter, or
+// end of string -- so a decimal like "0.16" or a percentage like
+// "45.3%" (no capital letter directly after, and no space inside the
+// number itself) never gets mistaken for a sentence boundary.
+const SENTENCE_BOUNDARY = /\.(?:\s+(?=[A-Z])|\s*$)/
+
+function firstSentence(text) {
+  const match = SENTENCE_BOUNDARY.exec(text)
+  const sentence = match ? text.slice(0, match.index + 1) : text
+  return sentence.trim()
+}
+
+function capitalizeFirst(text) {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+// Card-sized summary for the Clusters page (Phase 4.2.4c): the
+// archetype_description's parsed summary sentence when it parses
+// (parseArchetypeDescription above), otherwise the whole description
+// -- then just the first sentence of that, capitalised. Never invents
+// text; an empty/unparseable description just yields ''.
+export function getShortArchetypeSummary(description) {
+  if (!description) return ''
+  const parsed = parseArchetypeDescription(description)
+  const base = parsed ? parsed.summary : description
+  if (!base) return ''
+  return capitalizeFirst(firstSentence(base))
+}
