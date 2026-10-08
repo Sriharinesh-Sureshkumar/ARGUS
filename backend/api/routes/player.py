@@ -27,7 +27,7 @@ def get_player(player_id: str, analysis_id: int = Query(...), db: Session = Depe
             404,
             "analysis_not_found",
             f"Analysis {analysis_id} does not exist (it may have been deleted).",
-            "Pick an analysis from GET /api/v1/history, or upload the CSV again.",
+            "Open History to pick an analysis, or upload the CSV again.",
         )
 
     player = crud.get_player(db, analysis_id, player_id)
@@ -36,7 +36,7 @@ def get_player(player_id: str, analysis_id: int = Query(...), db: Session = Depe
             404,
             "player_not_found",
             f"Player '{player_id}' is not in analysis {analysis_id}.",
-            f"Check the player_id against the players listed in GET /api/v1/history/{analysis_id}.",
+            "Go back to the results list for this analysis and pick a player from there.",
         )
 
     archetype_description = None

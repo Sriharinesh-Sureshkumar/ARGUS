@@ -27,7 +27,7 @@ def get_clusters(analysis_id: int | None = Query(default=None), db: Session = De
                 404,
                 "no_analyses",
                 "No analyses exist yet, so there are no clusters to show.",
-                "Upload a CSV via POST /api/v1/analyze first.",
+                "Upload a CSV to create your first analysis.",
             )
         analysis_id = latest.id
 
@@ -37,7 +37,7 @@ def get_clusters(analysis_id: int | None = Query(default=None), db: Session = De
             404,
             "analysis_not_found",
             f"Analysis {analysis_id} does not exist (it may have been deleted).",
-            "Pick an analysis from GET /api/v1/history, or upload the CSV again.",
+            "Open History to pick an analysis, or upload the CSV again.",
         )
 
     artifacts = load_clustering_artifacts()

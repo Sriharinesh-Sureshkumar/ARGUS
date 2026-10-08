@@ -20,7 +20,7 @@ def _analysis_not_found(analysis_id: int):
         404,
         "analysis_not_found",
         f"Analysis {analysis_id} does not exist (it may have been deleted).",
-        "Pick an analysis from GET /api/v1/history, or upload the CSV again.",
+        "Open History to pick an analysis, or upload the CSV again.",
     )
 
 
