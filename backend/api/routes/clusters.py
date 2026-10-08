@@ -55,6 +55,7 @@ def get_clusters(analysis_id: int | None = Query(default=None), db: Session = De
             ArchetypeSummary(
                 cluster_id=cid,
                 archetype_name=entry.get("archetype_name", f"Cluster {cid}"),
+                archetype_description=entry.get("description", ""),
                 player_count=len(members),
                 avg_ensemble_score=avg_score,
                 cheater_pct_in_training=entry.get("cheater_pct", 0.0),

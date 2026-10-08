@@ -74,6 +74,7 @@ class HistoryItem(BaseModel):
 class ArchetypeSummary(BaseModel):
     cluster_id: int
     archetype_name: str
+    archetype_description: str
     player_count: int
     avg_ensemble_score: float
     cheater_pct_in_training: float  # from archetype_names.json, context only
