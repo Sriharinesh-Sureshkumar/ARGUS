@@ -11,6 +11,8 @@ backend/main.py's startup should call init_explainer() eagerly so the
 first request doesn't pay that cost.
 """
 
+import threading
+
 import numpy as np
 import pandas as pd
 import shap
@@ -42,6 +44,17 @@ _models = None
 _background = None
 _explainer = None
 
+# shap.KernelExplainer.shap_values() mutates instance state
+# (self.nsamplesAdded, self.maskMatrix, ...) with no internal locking,
+# so two requests computing SHAP for different players at the same
+# time -- e.g. React 18 StrictMode's deliberate double effect-invoke
+# in dev, each hitting GET /player in its own FastAPI threadpool
+# thread -- corrupt each other's in-progress sampling and raise
+# (observed: "IndexError: index out of bounds" inside addsample()).
+# One shared explainer instance means one global lock serializing
+# every call to it.
+_explainer_lock = threading.Lock()
+
 
 def _score_fn(X_array: np.ndarray) -> np.ndarray:
     """SHAP-compatible wrapper: raw (n, 11) unscaled array -> 1D
@@ -59,16 +72,20 @@ def init_explainer() -> None:
     if _explainer is not None:
         return
 
-    _models = load_models()
+    with _explainer_lock:
+        if _explainer is not None:  # another thread built it while we waited
+            return
 
-    X_train_cleaned, y_train_cleaned, _, _ = get_cleaned_train_test_data()
-    X_train_legit = X_train_cleaned[y_train_cleaned == 0]
+        _models = load_models()
 
-    rng = np.random.RandomState(42)
-    background_idx = rng.choice(len(X_train_legit), size=100, replace=False)
-    _background = X_train_legit[background_idx]
+        X_train_cleaned, y_train_cleaned, _, _ = get_cleaned_train_test_data()
+        X_train_legit = X_train_cleaned[y_train_cleaned == 0]
 
-    _explainer = shap.KernelExplainer(_score_fn, _background)
+        rng = np.random.RandomState(42)
+        background_idx = rng.choice(len(X_train_legit), size=100, replace=False)
+        _background = X_train_legit[background_idx]
+
+        _explainer = shap.KernelExplainer(_score_fn, _background)
 
 
 def explain_player(features_row: dict, background_data: np.ndarray | None = None) -> list[dict]:
@@ -88,12 +105,20 @@ def explain_player(features_row: dict, background_data: np.ndarray | None = None
     """
     init_explainer()
 
-    explainer = _explainer
-    if background_data is not None:
-        explainer = shap.KernelExplainer(_score_fn, background_data)
-
     x = np.array([[features_row[f] for f in FEATURE_ORDER]], dtype=float)
-    shap_values = np.asarray(explainer.shap_values(x))[0]
+
+    if background_data is not None:
+        # A fresh, local explainer -- not the shared module-level one,
+        # so no locking needed.
+        explainer = shap.KernelExplainer(_score_fn, background_data)
+        shap_values = np.asarray(explainer.shap_values(x))[0]
+    else:
+        # The shared explainer's shap_values() mutates its own instance
+        # state with no internal locking, so concurrent calls on it
+        # (e.g. two requests computing SHAP for different players at
+        # once) must be serialized here.
+        with _explainer_lock:
+            shap_values = np.asarray(_explainer.shap_values(x))[0]
 
     order = np.argsort(np.abs(shap_values))[::-1]
 

@@ -6,12 +6,24 @@ a player's detail page is requested.
 """
 
 import json
+import threading
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session, joinedload
 
 from core.explainer import explain_player
 from db.models import Analysis, Player, SHAPValue
+
+# Guards the whole check-cache / compute / write-cache sequence in
+# get_or_compute_shap() below. Without it, two concurrent requests for
+# the same never-cached player (e.g. React 18 StrictMode's deliberate
+# double effect-invoke in dev, each landing in its own FastAPI
+# threadpool thread) can both see an empty cache, both compute, and
+# both commit -- 22 duplicate rows for one player, not a crash, but
+# silently wrong data for every later read of that player's SHAP
+# values. One lock around the full sequence makes the second caller
+# simply see the first caller's committed rows.
+_shap_cache_lock = threading.Lock()
 
 
 def create_analysis(
@@ -128,43 +140,44 @@ def get_or_compute_shap(db: Session, player_row_id: int) -> tuple[list[SHAPValue
     top_shap_value (the rank-1 result) since those were left NULL at
     analyze time.
     """
-    existing = (
-        db.query(SHAPValue)
-        .filter(SHAPValue.player_id_fk == player_row_id)
-        .order_by(SHAPValue.feature_rank)
-        .all()
-    )
-    if existing:
-        print(f"[get_or_compute_shap] player_row_id={player_row_id}: cache hit ({len(existing)} rows)")
-        return existing, True
-
-    player = db.query(Player).filter(Player.id == player_row_id).first()
-    if player is None:
-        raise ValueError(f"Player row {player_row_id} not found")
-
-    features_row = json.loads(player.raw_features_json) if player.raw_features_json else {}
-    shap_results = explain_player(features_row)
-
-    shap_rows = []
-    for sv in shap_results:
-        row = SHAPValue(
-            player_id_fk=player_row_id,
-            feature_name=sv["feature_name"],
-            shap_value=sv["shap_value"],
-            feature_value=sv["feature_value"],
-            feature_rank=sv["feature_rank"],
-            plain_description=sv["plain_description"],
+    with _shap_cache_lock:
+        existing = (
+            db.query(SHAPValue)
+            .filter(SHAPValue.player_id_fk == player_row_id)
+            .order_by(SHAPValue.feature_rank)
+            .all()
         )
-        db.add(row)
-        shap_rows.append(row)
+        if existing:
+            print(f"[get_or_compute_shap] player_row_id={player_row_id}: cache hit ({len(existing)} rows)")
+            return existing, True
 
-    if shap_results:
-        player.top_shap_feature = shap_results[0]["feature_name"]
-        player.top_shap_value = shap_results[0]["shap_value"]
+        player = db.query(Player).filter(Player.id == player_row_id).first()
+        if player is None:
+            raise ValueError(f"Player row {player_row_id} not found")
 
-    db.commit()
-    for row in shap_rows:
-        db.refresh(row)
+        features_row = json.loads(player.raw_features_json) if player.raw_features_json else {}
+        shap_results = explain_player(features_row)
 
-    print(f"[get_or_compute_shap] player_row_id={player_row_id}: computed ({len(shap_rows)} rows)")
-    return shap_rows, False
+        shap_rows = []
+        for sv in shap_results:
+            row = SHAPValue(
+                player_id_fk=player_row_id,
+                feature_name=sv["feature_name"],
+                shap_value=sv["shap_value"],
+                feature_value=sv["feature_value"],
+                feature_rank=sv["feature_rank"],
+                plain_description=sv["plain_description"],
+            )
+            db.add(row)
+            shap_rows.append(row)
+
+        if shap_results:
+            player.top_shap_feature = shap_results[0]["feature_name"]
+            player.top_shap_value = shap_results[0]["shap_value"]
+
+        db.commit()
+        for row in shap_rows:
+            db.refresh(row)
+
+        print(f"[get_or_compute_shap] player_row_id={player_row_id}: computed ({len(shap_rows)} rows)")
+        return shap_rows, False
