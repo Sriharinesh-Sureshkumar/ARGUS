@@ -2537,3 +2537,49 @@ existing history.*
   `backend/trained_models/shap_background.npy` (8.7 KB),
   `sample_data/demo_players.csv`, `sample_data/README.md`. No commits.
   Nothing reverted -- the acceptance test passed outright.
+
+## Phase 4.4 — README, docs and screenshots
+
+- 8 Playwright screenshots into `docs/screenshots/` (1440px wide,
+  viewport capture, analysis 18 for every read-only state; the
+  "processing" shot used a disposable analysis, deleted immediately
+  after, confirmed via DB query that 12/18 are still 8/124 players).
+  All already well under the 400KB limit with no extra compression
+  needed (largest: `clusters.png` 131KB; smallest: `error-panel.png`
+  42KB).
+- Root `README.md` (replaced the empty file) and `frontend/README.md`
+  (replaced the Vite boilerplate) written using only facts traceable
+  to this file or the code -- notably the two AUC figures (ensemble
+  0.6033, Phase 2.3; supervised-reference-only ceiling 0.6745, "FINAL
+  WEEK 1 OUTCOME") and the two datasets (the Kaggle one actually used
+  -- named in the log only as "a pre-processed Kaggle dataset", no
+  more specific title/link recorded, so none was invented; CS2CD on
+  HuggingFace, evaluated and rejected, Phase 0). Left out: a training-
+  pipeline diagram (no single committed pipeline script/diagram
+  exists -- the pipeline is narrated phase-by-phase in this log, not
+  capturable as one verifiable diagram) and dataset licence text
+  (not recorded anywhere in-repo -- both README sections point to
+  "the dataset's own page" instead of guessing).
+- Verification: a link-checker script (kept outside the repo)
+  resolved all 12 relative links/images in the root README and the 1
+  in the frontend README against the filesystem -- all OK, 0 missing.
+  Both Mermaid blocks (system flowchart, upload->analysis->player-
+  detail sequence diagram) rendered without error via `npx -y
+  @mermaid-js/mermaid-cli` (ephemeral, nothing added to
+  `package.json`) -- valid syntax confirmed for both. Grepped both
+  READMEs for `cheater|guilty|flagged`: one hit, the literal filename
+  `cheaters.npy` inside the "training artifacts aren't in the repo"
+  bullet -- allowed dataset-label context, nothing changed.
+  Quick Start commands cross-checked against what Phase 4.3b actually
+  ran: `uv sync` and `npm ci` are verbatim; `uv run uvicorn main:app
+  --reload --app-dir backend` matches `main.py`'s own documented run
+  command (4.3b's clean-clone test used a custom `--port` for
+  parallel testing, same command otherwise); `npm run dev` is
+  `package.json`'s literal `dev` script (not re-run in the 4.3b clean
+  clone, which only exercised `npm run build` there, but it's the
+  same documented command that's been serving this entire project's
+  frontend continuously all session on :5173).
+- Files added: `README.md` (replaced), `frontend/README.md`
+  (replaced), `docs/screenshots/{upload,processing,results,
+  player-detail,clusters,history,delete-dialog,error-panel}.png`. No
+  code changes. No commits.
