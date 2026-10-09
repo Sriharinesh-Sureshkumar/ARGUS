@@ -143,7 +143,7 @@ export default function ConfirmDialog({
             data-dialog-cancel
             onClick={onCancel}
             disabled={busy}
-            className="rounded-md border border-line px-4 py-2 font-medium text-content disabled:opacity-40"
+            className="rounded-md border border-line px-4 py-2 font-medium text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button disabled:opacity-40"
           >
             {cancelLabel}
           </button>
@@ -151,7 +151,7 @@ export default function ConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            className="rounded-md bg-accent-red px-4 py-2 font-medium text-content disabled:opacity-60"
+            className="rounded-md bg-accent-red px-4 py-2 font-medium text-button-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button disabled:opacity-60"
           >
             {busy ? busyLabel : error ? 'Retry' : confirmLabel}
           </button>

@@ -10,6 +10,7 @@ import Podium from '../components/results/Podium.jsx'
 import ResultsHeader from '../components/results/ResultsHeader.jsx'
 import ResultsSkeleton from '../components/results/ResultsSkeleton.jsx'
 import ResultsTable from '../components/results/ResultsTable.jsx'
+import { usePageTitle } from '../lib/usePageTitle.js'
 
 const PAGE_SIZE = 9
 
@@ -38,6 +39,8 @@ export default function ResultsPage() {
     setQuery('')
     setPage(1)
   }
+
+  usePageTitle(`Results - ${result.meta?.csv_filename || `Analysis #${analysisId}`}`)
 
   const requestKey = `${analysisId}:${retryKey}`
 
@@ -96,6 +99,8 @@ export default function ResultsPage() {
   if (result.error) {
     const isNotFound = result.error.code === 'analysis_not_found'
     return (
+      <>
+      <h1 className="sr-only">Results</h1>
       <ErrorPanel
         error={result.error}
         onRetry={isNotFound ? undefined : () => setRetryKey((k) => k + 1)}
@@ -104,13 +109,13 @@ export default function ResultsPage() {
             <>
               <Link
                 to="/"
-                className="rounded-md bg-primary-button px-4 py-2 font-medium text-button-text"
+                className="rounded-md bg-primary-button px-4 py-2 font-medium text-button-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
               >
                 Back to upload
               </Link>
               <Link
                 to="/history"
-                className="rounded-md border border-line px-4 py-2 font-medium text-content"
+                className="rounded-md border border-line px-4 py-2 font-medium text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
               >
                 Open history
               </Link>
@@ -118,6 +123,7 @@ export default function ResultsPage() {
           ) : undefined
         }
       />
+      </>
     )
   }
 
@@ -159,7 +165,7 @@ export default function ResultsPage() {
       )}
 
       <div className="mt-8 overflow-hidden rounded-lg border border-line bg-surface">
-        <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-2.5 focus-within:ring-2 focus-within:ring-primary-button">
           <SearchIcon className="h-4 w-4 shrink-0 text-content-muted" />
           <input
             type="text"
@@ -177,7 +183,7 @@ export default function ResultsPage() {
             <button
               type="button"
               onClick={clearSearch}
-              className="mt-4 rounded-md bg-primary-button px-4 py-2 font-medium text-button-text"
+              className="mt-4 rounded-md bg-primary-button px-4 py-2 font-medium text-button-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
             >
               Clear search
             </button>
@@ -185,7 +191,9 @@ export default function ResultsPage() {
         ) : (
           sortedSource.length > 0 && (
             <>
-              <ResultsTable analysisId={data.analysis_id} players={pageRows} sort={sort} onSort={handleSort} />
+              <div className="overflow-x-auto">
+                <ResultsTable analysisId={data.analysis_id} players={pageRows} sort={sort} onSort={handleSort} />
+              </div>
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3">
                 <p className="text-sm text-content-muted">
                   Showing {startIdx + 1}-{Math.min(startIdx + PAGE_SIZE, sortedSource.length)} of{' '}

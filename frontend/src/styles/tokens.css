@@ -36,7 +36,12 @@
 
   /* Neutrals */
   --color-content: #F2F3F2;       /* main text */
-  --color-content-muted: #7E7C79; /* secondary text, captions */
+  --color-content-muted: #989794; /* secondary text, captions -- Phase 4.2.6:
+                                       lightness raised from #7E7C79 (same hue/
+                                       sat) so it clears 4.6:1 against the
+                                       worst real background it sits on
+                                       (row-highlight, 3.24:1 -> 4.61:1); see
+                                       docs/PROJECT_LOG.md for the full table */
   --color-line: #312E28;          /* borders, dividers */
   --color-dropzone-border: #3F3C35; /* dashed upload-dropzone / empty-state border */
 

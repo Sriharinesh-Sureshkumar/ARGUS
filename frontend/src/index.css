@@ -7,6 +7,20 @@ html {
   color-scheme: dark;
 }
 
+/* Phase 4.2.6: a wide table's own `overflow-x-auto` card correctly
+   clips/scrolls its own content (confirmed via clientWidth <
+   scrollWidth on that element), but some nested-scroll-container +
+   percentage-width layouts still leave the <html> root horizontally
+   scrollable (its scrollWidth exceeds the viewport even though
+   <body>'s does not). overflow-x: hidden here is the standard,
+   zero-risk guard against ANY page-level horizontal scroll, at any
+   width, regardless of what a descendant's own scroll container does
+   internally. */
+html,
+body {
+  overflow-x: hidden;
+}
+
 body {
   @apply bg-base text-content font-sans antialiased;
 }

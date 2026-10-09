@@ -15,6 +15,7 @@ import PlayerDetailSkeleton from '../components/player/PlayerDetailSkeleton.jsx'
 import RawFeatureTable from '../components/player/RawFeatureTable.jsx'
 import ShapCard from '../components/player/ShapCard.jsx'
 import ScoreRing from '../components/ScoreRing.jsx'
+import { usePageTitle } from '../lib/usePageTitle.js'
 
 const NOT_FOUND_CODES = new Set(['player_not_found', 'analysis_not_found'])
 
@@ -34,6 +35,7 @@ const SHAP_INFO_TEXT =
 
 export default function PlayerDetailPage() {
   const { analysisId, playerId } = useParams()
+  usePageTitle(playerId)
 
   const [analysisRetry, setAnalysisRetry] = useState(0)
   const [playerRetry, setPlayerRetry] = useState(0)
@@ -107,20 +109,23 @@ export default function PlayerDetailPage() {
     const isNotFound = NOT_FOUND_CODES.has(pageError.code)
     const backToUpload = pageError.code === 'analysis_not_found'
     return (
-      <ErrorPanel
-        error={pageError}
-        onRetry={isNotFound ? undefined : () => setAnalysisRetry((r) => r + 1)}
-        actions={
-          isNotFound ? (
-            <Link
-              to={backToUpload ? '/' : `/results/${analysisId}`}
-              className="rounded-md bg-primary-button px-4 py-2 font-medium text-button-text"
-            >
-              {backToUpload ? 'Back to upload' : 'Back to results'}
-            </Link>
-          ) : undefined
-        }
-      />
+      <>
+        <h1 className="sr-only">Player {playerId}</h1>
+        <ErrorPanel
+          error={pageError}
+          onRetry={isNotFound ? undefined : () => setAnalysisRetry((r) => r + 1)}
+          actions={
+            isNotFound ? (
+              <Link
+                to={backToUpload ? '/' : `/results/${analysisId}`}
+                className="rounded-md bg-primary-button px-4 py-2 font-medium text-button-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
+              >
+                {backToUpload ? 'Back to upload' : 'Back to results'}
+              </Link>
+            ) : undefined
+          }
+        />
+      </>
     )
   }
 
@@ -149,14 +154,17 @@ export default function PlayerDetailPage() {
   return (
     <section>
       <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-content-muted">
-        <Link to={`/results/${analysisId}`} className="flex items-center gap-1.5 hover:text-content">
+        <Link
+          to={`/results/${analysisId}`}
+          className="flex items-center gap-1.5 rounded-sm hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
+        >
           <BackArrowIcon className="h-3.5 w-3.5" />
           Results
         </Link>
         <span aria-hidden="true">&gt;</span>
-        <span className="text-content">
+        <h1 className="text-content">
           Player <span className="font-mono">{playerId}</span>
-        </span>
+        </h1>
       </nav>
 
       <div className="mt-4 rounded-lg border border-line bg-surface p-6">

@@ -43,7 +43,7 @@ export default function HistoryTable({ items, sort, onSort, onDeleteClick }) {
   }
 
   return (
-    <table className="w-full table-fixed border-collapse text-left">
+    <table className="w-full min-w-[560px] table-fixed border-collapse text-left">
       <caption className="sr-only">Past analyses</caption>
       <colgroup>
         <col className="w-[48%]" />

@@ -2048,3 +2048,229 @@ existing history.*
   - No `pageerror`/`console.error` anywhere in the run.
   - Screenshots taken at rest, with a hovered row, with keyboard focus
     on a filename link, and with keyboard focus on a trash button.
+
+## Phase 4.2.6 — Polish + accessibility pass (contrast, axe, keyboard, responsive, dead code)
+
+- **1. Contrast** (WCAG 2 AA: 4.5:1 text, 3:1 large text/UI borders).
+  Computed every pair actually used in the app, not just the three
+  named backgrounds (`content-muted` turned out to be used on two
+  *worse* real backgrounds too -- see below):
+
+  | foreground | background | before | after |
+  |---|---|---|---|
+  | content-muted `#7E7C79` | base `#12110F` | 4.53 | 6.46 |
+  | content-muted | surface `#1A1914` | 4.23 (FAIL) | 6.03 |
+  | content-muted | table-header `#211F1C` | 3.95 (FAIL) | 5.63 |
+  | content-muted | row-highlight `#342E21` | **3.24 (FAIL, worst)** | **4.61** |
+  | content-muted | tooltip-bg `#302E29` | 3.26 (FAIL) | 4.64 |
+  | content `#F2F3F2` | every other bg (base/surface/table-header/row-highlight/accent-indigo/amber/gray) | 9.0-17.0 | unchanged, all pass |
+  | content | accent-red `#F2726C` (ConfirmDialog Delete button) | **2.55 (FAIL)** | n/a -- see below |
+  | link `#A1B5E2` | surface/base/row-highlight | 6.56-9.19 | pass, unchanged |
+  | nav-active `#EBD8B2` | surface | 12.57 | pass, unchanged |
+  | accent-red | surface/base/row-highlight | 4.75-6.65 | pass, unchanged |
+  | button-text `#000000` | primary-button `#F8E0BA` | 16.36 | pass, unchanged |
+  | primary-button | surface/base | 13.71-14.70 | pass, unchanged |
+  | bar-fill `#F1D6A7` | surface | 12.50 | pass, unchanged |
+  | line `#312E28` (border) | surface | **1.30 (FAIL, 3:1 bar)** | not fixed, see below |
+  | line | base | **1.39 (FAIL)** | not fixed |
+  | dropzone-border `#3F3C35` | base | **1.72 (FAIL)** | not fixed |
+  | podium / pagination-active-border (borders) | surface | 6.66-11.30 | pass, unchanged |
+
+  **Fixed**: `--color-content-muted` raised from `#7E7C79` to `#989794`
+  (same hue/saturation, HSL lightness 0.4843 -> 0.5893 -- the smallest
+  increase that clears 4.6:1 against `row-highlight`, the *worst* real
+  background it's used on, not just the worst of the three named in
+  the task; that also clears tooltip-bg, table-header, surface and
+  base by a wider margin). `row-highlight` is real, not theoretical:
+  it's the archetype card's own `focused` background (Phase 4.2.4c),
+  which has several `content-muted` lines (share %, avg-score label,
+  description, training-data line) sitting directly on it; `tooltip-bg`
+  is real too (the SHAP row's "(seen in ...)" tag chip,
+  `components/player/ShapCard.jsx`).
+  `content` on `accent-red` (2.55:1, the Delete button's own text)
+  was fixed **without changing any token value**: `ConfirmDialog.jsx`'s
+  Delete button now uses `text-button-text` (`#000000`, already
+  defined as "text on primary-button / podium badge") instead of
+  `text-content` -- 7.40:1 against `accent-red`. This is a markup-level
+  fix (which existing token a specific component reaches for), not a
+  colour-value change, so it doesn't conflict with "no new colours
+  except the single muted-text fix."
+  **Not fixed** (reported, not changed): `line` and `dropzone-border`
+  both fail the 3:1 non-text/border threshold against their real
+  backgrounds. Chose not to touch either: (a) axe-core's own
+  `color-contrast` rule -- the actual automated check this phase runs
+  -- does not flag border contrast at all, only text, so this wasn't
+  caught by step 2 either; (b) both are mockup-sourced, intentionally
+  subtle dividers/outlines sampled pixel-for-pixel from the design
+  mockups across many earlier phases, and every card already has a
+  `surface`-vs-`base` fill-colour shift (low but present) plus
+  consistent padding/grouping as an alternative structural cue, which
+  is the kind of case WCAG 1.4.11 treats as a component whose boundary
+  isn't solely conveyed by that line; (c) `--color-line` is one of the
+  most load-bearing visual tokens in the app (borders on nearly every
+  card/table/divider in every screenshot since Phase 4.2.0b) --
+  mutating it to clear 3:1 requires raising it all the way to `#6B6457`
+  (L 0.1745 -> 0.3795), a visibly different, much more prominent
+  gray-brown border that would be a large, unasked-for aesthetic
+  change far beyond "polish." Flagging this rather than guessing
+  whether the task's "fix every offending pair" or its "no new
+  colours except the single...fix" framing should win when they
+  point different ways on this one.
+- **2. Automated audit**: `axe-core` 4.10.2, downloaded once to the OS
+  temp scratch dir (`axe.min.js`, injected per-page via
+  `page.add_script_tag`) and driven from a Playwright script also kept
+  entirely outside the repo -- no new `package.json` dependency.
+  Violation counts, before any 4.2.6 fix and after all of them, across
+  all 10 routes plus the open delete dialog on `/history`:
+
+  | route | before | after |
+  |---|---|---|
+  | `/` | 1 serious | 0 |
+  | `/results/18` | 1 serious | 0 |
+  | `/results/18/player/r100` | 1 serious + 1 moderate | 0 |
+  | `/results/18/player/r71` | 1 serious + 1 moderate | 0 |
+  | `/clusters` | 1 serious | 0 |
+  | `/clusters?analysis=18` | 1 serious | 0 |
+  | `/history` | 1 serious | 0 |
+  | `/does-not-exist` | 1 serious | 0 |
+  | `/results/999999` | 1 serious + 1 moderate | 0 |
+  | `/clusters?analysis=999999` | 1 serious + 1 moderate | 0 |
+  | `/history` (dialog open) | 1 serious | 0 |
+
+  Every "serious" was `color-contrast` (the `content-muted` issue
+  above, found independently by both the manual WCAG math in step 1
+  and this automated run -- consistent). Every "moderate" was
+  `page-has-heading-one`: `PlayerDetailPage.jsx` had **no `<h1>` at
+  all** (only two `<h2>`s on its sub-cards) -- its breadcrumb's
+  "Player `<id>`" `<span>` is now an `<h1>` (Tailwind's preflight
+  already resets heading font-size/weight to `inherit`, so this is a
+  pure semantic change, zero visual difference, confirmed in
+  screenshots); and `ResultsPage.jsx`/`ClustersPage.jsx`/
+  `HistoryPage.jsx`/`PlayerDetailPage.jsx`'s **error-only** branches
+  (a bare `<ErrorPanel>` with nothing else, no page h1 elsewhere on
+  that render) now each render a `sr-only` `<h1>` (page name) as a
+  sibling above the panel -- the visible heading stays the panel's own
+  `<h2>` message, only an accessible page title was added. All 0/0
+  confirmed by rerunning the identical script after every other fix in
+  this phase, not assumed.
+- **3. Keyboard and focus**: `frontend/src/lib/usePageTitle.js` (new)
+  sets `document.title` per page -- confirmed live: "Upload - ARGUS",
+  "Results - real_sample_124.csv - ARGUS", "r100 - ARGUS", "Clusters -
+  ARGUS", "History - ARGUS", "Not found - ARGUS", matching the spec's
+  formats exactly (`PlayerDetailPage` passes the bare `playerId`, no
+  "Player" prefix, per the literal spec). `Layout.jsx`: a `sr-only`-
+  until-`:focus-visible` "Skip to main content" link (native
+  `href="#main-content"` fragment focus, no extra JS) and a
+  `useEffect` keyed on `location.pathname`/`location.search` that
+  calls `.focus()` on `<main tabIndex={-1}>` on every route change, so
+  screen readers start announcing the new page instead of silently
+  leaving focus on a stale nav link.
+  Added a missing `focus-visible:ring-2 focus-visible:ring-primary-button`
+  (consistent with every other interactive element already using it)
+  to every control that lacked one: `Pagination.jsx` (all 3 button
+  variants), `Navbar.jsx`'s `NavLink`s, `ConfirmDialog.jsx`'s
+  Cancel/Delete buttons, `ErrorPanel.jsx`'s retry button, `
+  ResultsHeader.jsx`'s back-arrow link, every `ErrorPanel`
+  "Back to upload"/"Open history"/"Back to results" action link across
+  Results/Clusters/PlayerDetail/History, `ResultsPage.jsx`'s "Clear
+  search" button, `NotFoundPage.jsx`'s "Back to Upload" link (which
+  was also still using a stray `text-accent-indigo` for link colour --
+  a leftover token misuse fixed to `text-link`, matching every other
+  nav-style link). `DropZone.jsx`'s hidden file input had **no visible
+  focus indicator at all** (`sr-only`, so nothing to see when Tab
+  landed on it) -- fixed via `focus-within` on the wrapping `<label>`.
+  `ResultsPage.jsx`'s search `<input>` removed the native outline
+  (`focus:outline-none`) with no replacement -- fixed via
+  `focus-within:ring-2` on its wrapping bar.
+  Tab-walked `PlayerDetailPage` (25 presses, logged): skip link -> 3
+  nav links -> breadcrumb "Results" link -> model-breakdown toggle ->
+  2 info-disclosure toggles -> raw-features toggle -> (browser chrome,
+  outside Playwright's view -- the natural end of the page's own tab
+  sequence) -> wraps back to the skip link. No trap, nothing
+  unreachable; archetype cards (4.2.4c) and the History table + delete
+  dialog (4.2.5b/c) were already keyboard-walked in their own phases
+  with the same result.
+- **4. Responsive**: 1440/1024/768/390px across all 9 routes. Navbar
+  never wraps (checked via each child's real `getBoundingClientRect().top`,
+  not `offsetTop`, which is unreliable for non-positioned flex
+  children) and never overflows its own box at any width, including
+  390. No **real**, user-triggerable horizontal page scroll at any
+  width: verified with an actual mouse-wheel horizontal gesture (not
+  just comparing `documentElement.scrollWidth`/`clientWidth`, which
+  gave a false positive here -- Chromium's root `scrollWidth` can
+  still report the full width of a descendant's own `overflow-x-auto`
+  scroll content even though that descendant correctly clips/scrolls
+  it and the real page never visually or interactively scrolls; a
+  wheel-gesture `window.scrollX` check is the real-world-accurate
+  test). Added a defensive `html, body { overflow-x: hidden }` in
+  `index.css` regardless, as belt-and-suspenders against that same
+  root-level quirk. `ResultsTable.jsx`/`HistoryTable.jsx` gained
+  `min-w-[640px]`/`min-w-[560px]` (so columns don't get squeezed
+  illegibly narrow instead of scrolling) wrapped in their own
+  `overflow-x-auto` *inner* div -- deliberately not on the whole card,
+  since the search bar (Results) and the "Showing a-b of N" +
+  Pagination footer (both pages) are siblings of the table inside the
+  same card and must stay full-width/non-scrolling, not travel with
+  the table.
+- **5. Known polish items**:
+  - `ProcessingSkeleton.jsx` (Upload): root now `mx-auto max-w-xl`
+    (narrower than the full-width `DropZone`, matching
+    `docs/mockups/upload.png`'s "Processing" panel proportions); the 4
+    skeleton bars per row are now `flex-1` instead of fixed
+    `w-28/w-36/w-20/w-24`, so they span the panel's full width at any
+    size instead of leaving empty space on the right. Screenshotted.
+  - `ClustersPage.jsx`: the scatter card is now `flex h-full flex-col`
+    inside a `lg:items-stretch` grid, and `ClusterScatter.jsx` gained
+    an opt-in `fill` prop (only passed from `ClustersPage`;
+    `PlayerDetailPage`'s usage is 100% unchanged) that switches the
+    svg from `h-auto` to `h-full` with its flex ancestors set to
+    `flex-1 min-h-0` -- the svg's own `preserveAspectRatio` default
+    (`xMidYMid meet`) handles the actual aspect-correct scaling, no
+    extra code needed there. On desktop the two columns now end much
+    closer to the same bottom edge (confirmed in the screenshot);
+    stacks normally on narrow widths since the grid itself collapses
+    to one column there (no stretching to fight).
+  - Dead code: no `console.log`/`TODO`/`FIXME` anywhere; every icon
+    export (`icons.jsx`, `upload/icons.jsx`), every `lib/` export, and
+    every component file is imported somewhere (checked each by name,
+    not just trusted the linter); all 4 `accent-*` tokens are used
+    (`accent-indigo`/`accent-amber` only inside `lib/clusters.js`,
+    which is `.js` not `.jsx` -- an early grep restricted to `*.jsx`
+    missed them and wrongly looked unused for a moment). `getHealth()`
+    kept in `api/client.js` per instruction, despite having zero
+    callers (the navbar status dot that used it was removed in Phase
+    4.2.0c).
+  - Copy pass: grepped `cheater|guilty|flagged|banned|verdict` across
+    every `.jsx`/`.js`. One real hit:
+    `ResultsHeader.jsx`: *"... not a verdict."* -> *"... not a final
+    decision."* (same cautionary meaning, no banned word). The other
+    matches were all fine as-is: the `cheaterPct`/`cheater_pct_in_training`
+    *variable/prop names* (not user-visible), and the one explicitly
+    allowed "labelled cheaters" line (Phase 4.2.4c). "not guilt" (the
+    `ClustersPage` note) is unaffected -- the banned word is "guilty",
+    not "guilt", and the task's own copy for that exact sentence
+    predates this phase.
+- **Not fixed / out of scope, with reasons**: the `line`/
+  `dropzone-border` contrast findings (above); `PlayerDetailSkeleton`'s
+  loading state has no `<h1>` (it's a transient, `aria-hidden="true"`
+  shimmer placeholder typically on screen under a second -- not caught
+  by axe since the whole section is hidden from the accessibility
+  tree, and not worth adding a throwaway heading to a non-content
+  state for).
+- Files changed: `frontend/src/styles/tokens.css`,
+  `frontend/src/index.css`,
+  `frontend/src/components/{ClusterScatter,ConfirmDialog,ErrorPanel,
+  Layout,Navbar}.jsx`, `frontend/src/components/history/
+  HistoryTable.jsx`, `frontend/src/components/results/{Pagination,
+  ResultsHeader,ResultsTable}.jsx`, `frontend/src/components/upload/
+  {DropZone,ProcessingSkeleton}.jsx`, `frontend/src/pages/
+  {ClustersPage,HistoryPage,NotFoundPage,PlayerDetailPage,ResultsPage,
+  UploadPage}.jsx`; new `frontend/src/lib/usePageTitle.js`.
+- Verified: `npm run build`/`lint` (oxlint) clean; hex-grep clean
+  (only `tokens.css` itself has hex, and the sole value change there
+  is the one documented `content-muted` fix). Screenshots: Upload
+  processing (narrower panel, full-width skeleton bars), Clusters
+  (desktop, both columns near-equal height), History at 390px (table
+  scrolls inside its card -- Players/Delete columns off-screen until
+  scrolled, page itself does not scroll, navbar intact). No console
+  errors on any of the 10 routes.

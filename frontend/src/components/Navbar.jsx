@@ -3,9 +3,10 @@ import { NavLink } from 'react-router-dom'
 // NavLink passes isActive, so the current page's link is highlighted to
 // match the underlined tab in the mockups (docs/mockups/clusters.png).
 function linkClass({ isActive }) {
+  const base = 'rounded-sm border-b-2 pb-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button'
   return isActive
-    ? 'border-b-2 border-nav-active pb-1 text-nav-active font-medium'
-    : 'border-b-2 border-transparent pb-1 text-content-muted hover:text-content'
+    ? `${base} border-nav-active text-nav-active font-medium`
+    : `${base} border-transparent text-content-muted hover:text-content`
 }
 
 export default function Navbar() {

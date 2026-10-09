@@ -28,7 +28,7 @@ export default function Pagination({ currentPage, totalPages, onPageChange }) {
         onClick={() => onPageChange(currentPage - 1)}
         disabled={currentPage === 1}
         aria-label="Previous page"
-        className="flex h-7 w-7 items-center justify-center rounded-md border border-line text-content disabled:opacity-40"
+        className="flex h-7 w-7 items-center justify-center rounded-md border border-line text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button disabled:opacity-40"
       >
         <ChevronLeftIcon className="h-4 w-4" />
       </button>
@@ -41,7 +41,7 @@ export default function Pagination({ currentPage, totalPages, onPageChange }) {
             onClick={() => onPageChange(entry)}
             aria-label={`Page ${entry}`}
             aria-current={entry === currentPage ? 'page' : undefined}
-            className={`flex h-7 w-7 items-center justify-center rounded-md border font-mono text-sm ${
+            className={`flex h-7 w-7 items-center justify-center rounded-md border font-mono text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button ${
               entry === currentPage
                 ? 'border-pagination-active-border bg-row-highlight text-content'
                 : 'border-line text-content-muted hover:text-content'
@@ -61,7 +61,7 @@ export default function Pagination({ currentPage, totalPages, onPageChange }) {
         onClick={() => onPageChange(currentPage + 1)}
         disabled={currentPage === totalPages}
         aria-label="Next page"
-        className="flex h-7 w-7 items-center justify-center rounded-md border border-line text-content disabled:opacity-40"
+        className="flex h-7 w-7 items-center justify-center rounded-md border border-line text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button disabled:opacity-40"
       >
         <ChevronRightIcon className="h-4 w-4" />
       </button>

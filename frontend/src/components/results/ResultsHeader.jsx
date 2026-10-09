@@ -17,7 +17,7 @@ export default function ResultsHeader({ analysisId, playerCount, meta }) {
         <Link
           to="/history"
           aria-label="Back to history"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-content hover:bg-surface"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line text-content hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
         >
           <BackArrowIcon className="h-4 w-4" />
         </Link>
@@ -29,7 +29,7 @@ export default function ResultsHeader({ analysisId, playerCount, meta }) {
         </div>
       </div>
       <p className="mt-3 text-sm text-content-muted">
-        Ranked by suspicion score. This is a triage list for human review, not a verdict.
+        Ranked by suspicion score. This is a triage list for human review, not a final decision.
       </p>
     </div>
   )

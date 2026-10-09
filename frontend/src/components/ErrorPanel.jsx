@@ -25,7 +25,7 @@ export default function ErrorPanel({ error, onRetry, retryLabel = 'Try again', a
           <button
             type="button"
             onClick={onRetry}
-            className="mt-5 rounded-md bg-primary-button px-4 py-2 font-medium text-button-text"
+            className="mt-5 rounded-md bg-primary-button px-4 py-2 font-medium text-button-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
           >
             {retryLabel}
           </button>

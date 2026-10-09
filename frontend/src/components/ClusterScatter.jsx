@@ -60,6 +60,7 @@ export default function ClusterScatter({
   caption = DEFAULT_CAPTION,
   onPointClick,
   focusedClusterId = null,
+  fill = false,
 }) {
   const [hoveredId, setHoveredId] = useState(null)
 
@@ -96,12 +97,12 @@ export default function ClusterScatter({
   const hovered = onPointClick ? shown.find((p) => p.id === hoveredId) : null
 
   return (
-    <div>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-        <div className="relative flex-1">
+    <div className={fill ? 'flex h-full flex-col' : undefined}>
+      <div className={`flex flex-col gap-4 sm:flex-row sm:items-start ${fill ? 'min-h-0 flex-1' : ''}`}>
+        <div className={`relative flex-1 ${fill ? 'min-h-0' : ''}`}>
         <svg
           viewBox={`0 0 ${width} ${height}`}
-          className="h-auto w-full"
+          className={fill ? 'h-full w-full' : 'h-auto w-full'}
           role="img"
           aria-label={
             highlighted

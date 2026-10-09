@@ -9,6 +9,7 @@ import ClustersSkeleton from '../components/clusters/ClustersSkeleton.jsx'
 import ClusterScatter, { MAX_BACKGROUND_POINTS } from '../components/ClusterScatter.jsx'
 import ErrorPanel from '../components/ErrorPanel.jsx'
 import { formatAnalysisDate } from '../lib/dates.js'
+import { usePageTitle } from '../lib/usePageTitle.js'
 
 // k=3, fixed by training (src/lib/clusters.js) -- always rendered as
 // 3 cards even if this analysis has zero players in one of them (the
@@ -21,6 +22,8 @@ const CANONICAL_CLUSTER_IDS = [0, 1, 2]
 const SCORE_SPREAD_THRESHOLD = 0.15
 
 export default function ClustersPage() {
+  usePageTitle('Clusters')
+
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const analysisIdParam = searchParams.get('analysis')
@@ -83,21 +86,30 @@ export default function ClustersPage() {
     const isNoAnalyses = code === 'no_analyses'
     const isNotFound = code === 'analysis_not_found'
     return (
-      <ErrorPanel
-        error={result.error}
-        onRetry={isNoAnalyses || isNotFound ? undefined : () => setRetryKey((k) => k + 1)}
-        actions={
-          isNoAnalyses ? (
-            <Link to="/" className="rounded-md bg-primary-button px-4 py-2 font-medium text-button-text">
-              Back to upload
-            </Link>
-          ) : isNotFound ? (
-            <Link to="/history" className="rounded-md bg-primary-button px-4 py-2 font-medium text-button-text">
-              Open history
-            </Link>
-          ) : undefined
-        }
-      />
+      <>
+        <h1 className="sr-only">Clusters</h1>
+        <ErrorPanel
+          error={result.error}
+          onRetry={isNoAnalyses || isNotFound ? undefined : () => setRetryKey((k) => k + 1)}
+          actions={
+            isNoAnalyses ? (
+              <Link
+                to="/"
+                className="rounded-md bg-primary-button px-4 py-2 font-medium text-button-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
+              >
+                Back to upload
+              </Link>
+            ) : isNotFound ? (
+              <Link
+                to="/history"
+                className="rounded-md bg-primary-button px-4 py-2 font-medium text-button-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
+              >
+                Open history
+              </Link>
+            ) : undefined
+          }
+        />
+      </>
     )
   }
 
@@ -161,23 +173,27 @@ export default function ClustersPage() {
     <section>
       <h1 className="text-2xl font-semibold text-content">Behaviour clusters</h1>
       <p className="mt-1 text-content-muted">{subtitleParts.join(' - ')}</p>
-      <Link to={`/results/${analysisId}`} className="mt-2 inline-block text-sm text-link hover:underline">
+      <Link
+        to={`/results/${analysisId}`}
+        className="mt-2 inline-block rounded-sm text-sm text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
+      >
         View ranked results &rarr;
       </Link>
 
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
-        <div className="rounded-lg border border-line bg-surface p-6">
-          <h2 className="font-semibold text-content">Player clustering ({total} players)</h2>
-          <div className="mt-4">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px] lg:items-stretch">
+        <div className="flex h-full flex-col rounded-lg border border-line bg-surface p-6">
+          <h2 className="shrink-0 font-semibold text-content">Player clustering ({total} players)</h2>
+          <div className="mt-4 min-h-0 flex-1">
             <ClusterScatter
               points={scatterPoints}
               clusterLabels={clusterLabels}
               focusedClusterId={focusedClusterId}
               onPointClick={handlePointClick}
+              fill
             />
           </div>
           {total > MAX_BACKGROUND_POINTS && (
-            <p className="mt-2 text-xs text-content-muted">
+            <p className="mt-2 shrink-0 text-xs text-content-muted">
               Showing {MAX_BACKGROUND_POINTS} of {total} players
             </p>
           )}

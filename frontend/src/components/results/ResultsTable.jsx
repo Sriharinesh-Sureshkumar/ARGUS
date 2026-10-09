@@ -42,7 +42,7 @@ export default function ResultsTable({ analysisId, players, sort, onSort }) {
   }
 
   return (
-    <table className="w-full table-fixed border-collapse text-left">
+    <table className="w-full min-w-[640px] table-fixed border-collapse text-left">
       <caption className="sr-only">Players ranked by suspicion score</caption>
       <colgroup>
         <col className="w-[10%]" />

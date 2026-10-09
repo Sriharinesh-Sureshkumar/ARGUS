@@ -9,6 +9,7 @@ import HistorySkeleton from '../components/history/HistorySkeleton.jsx'
 import HistoryTable from '../components/history/HistoryTable.jsx'
 import { DocumentIcon, TrashIcon } from '../components/icons.jsx'
 import Pagination from '../components/results/Pagination.jsx'
+import { usePageTitle } from '../lib/usePageTitle.js'
 
 const PAGE_SIZE = 10
 
@@ -21,6 +22,8 @@ function toComparableDate(createdAt) {
 }
 
 export default function HistoryPage() {
+  usePageTitle('History')
+
   // result.key identifies which retryKey the data/error below belong
   // to -- compared against requestKey during render (isLoading) the
   // same way ResultsPage/ClustersPage derive loading/ready/error, so
@@ -120,7 +123,12 @@ export default function HistoryPage() {
   }
 
   if (result.error) {
-    return <ErrorPanel error={result.error} onRetry={() => setRetryKey((k) => k + 1)} />
+    return (
+      <>
+        <h1 className="sr-only">History</h1>
+        <ErrorPanel error={result.error} onRetry={() => setRetryKey((k) => k + 1)} />
+      </>
+    )
   }
 
   const items = result.data
@@ -156,13 +164,18 @@ export default function HistoryPage() {
           <DocumentIcon className="h-10 w-10 text-content-muted" />
           <p className="text-lg font-semibold text-content">No analyses yet</p>
           <p className="text-content-muted">Upload a player-stats CSV to get started.</p>
-          <Link to="/" className="mt-2 rounded-md bg-primary-button px-4 py-2 font-medium text-button-text">
+          <Link
+            to="/"
+            className="mt-2 rounded-md bg-primary-button px-4 py-2 font-medium text-button-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-button"
+          >
             Upload a CSV
           </Link>
         </div>
       ) : (
         <div className="mt-6 overflow-hidden rounded-lg border border-line bg-surface">
-          <HistoryTable items={pageItems} sort={sort} onSort={handleSort} onDeleteClick={openDeleteDialog} />
+          <div className="overflow-x-auto">
+            <HistoryTable items={pageItems} sort={sort} onSort={handleSort} onDeleteClick={openDeleteDialog} />
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3">
             <p className="text-sm text-content-muted">
               Showing {startIdx + 1}-{Math.min(startIdx + PAGE_SIZE, sorted.length)} of {sorted.length}

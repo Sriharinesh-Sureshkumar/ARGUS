@@ -39,7 +39,7 @@ export default function DropZone({ onFileSelected }) {
       <p className="mt-4 text-lg font-semibold text-content">Drop a player-stats CSV here</p>
       <p className="mt-1 text-content-muted">
         or{' '}
-        <label className="cursor-pointer font-medium text-primary-button hover:underline">
+        <label className="cursor-pointer rounded-sm font-medium text-primary-button hover:underline focus-within:outline-none focus-within:ring-2 focus-within:ring-primary-button">
           browse files
           <input type="file" accept=".csv" className="sr-only" onChange={handleInputChange} />
         </label>

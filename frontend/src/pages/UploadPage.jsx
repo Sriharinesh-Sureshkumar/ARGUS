@@ -8,6 +8,7 @@ import DropZone from '../components/upload/DropZone.jsx'
 import ProcessingSkeleton from '../components/upload/ProcessingSkeleton.jsx'
 import UploadProgress from '../components/upload/UploadProgress.jsx'
 import { MAX_ROWS, MAX_UPLOAD_BYTES } from '../config.js'
+import { usePageTitle } from '../lib/usePageTitle.js'
 
 // Client-side checks only -- same {code, message, fix} shape as the
 // backend (backend/api/errors.py) so UploadError never has to special-
@@ -45,6 +46,8 @@ function validateFile(file) {
 }
 
 export default function UploadPage() {
+  usePageTitle('Upload')
+
   const [status, setStatus] = useState('idle') // "idle" | "uploading" | "processing" | "error"
   const [file, setFile] = useState(null)
   const [progress, setProgress] = useState(0)
