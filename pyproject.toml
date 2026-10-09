@@ -21,6 +21,15 @@ dependencies = [
     "uvicorn[standard]>=0.53.0",
 ]
 
+# Training/notebook-only packages -- never imported by the FastAPI
+# backend at startup or per-request (Phase 4.3b). Install with
+# `uv sync --extra train` to run scripts/export_runtime_artifacts.py,
+# the notebooks, or anything else that retrains a model.
+[project.optional-dependencies]
+train = [
+    "cleanlab>=2.9.0",
+]
+
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"

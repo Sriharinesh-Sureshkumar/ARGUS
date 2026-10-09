@@ -2274,3 +2274,266 @@ existing history.*
   scrolls inside its card -- Players/Delete columns off-screen until
   scrolled, page itself does not scroll, navbar intact). No console
   errors on any of the 10 routes.
+
+## Phase 4.3 — Backend cleanup, end-to-end pass, repo readiness audit
+
+- **1. `created_at` with an explicit UTC marker.** `backend/api/
+  schemas.py`: added `_isoformat_z()` (naive datetime -> `"...Z"`
+  string; an aware one gets `.astimezone(utc)` first and `"+00:00"`
+  swapped for `"Z"`) and a `@field_serializer("created_at")` on
+  `HistoryItem` -- the only schema that carries `created_at`
+  (confirmed by grep; nothing else needed touching). The DB column
+  itself is untouched, still naive -- this only changes what the API
+  response string looks like. Live-verified: `GET /history` now
+  returns `"2026-10-09T04:50:09.814322Z"` instead of the old
+  `"2026-10-09T04:50:09.814322"`.
+  `frontend/src/lib/dates.js`: `toLocalDate()`'s check widened from
+  `endsWith('Z')` to a regex (`/(Z|[+-]\d{2}:\d{2})$/`) matching *any*
+  timezone marker, so it still works for the new `Z`-suffixed form,
+  the old bare-naive form, and wouldn't double-append if a future
+  change serialised with a `+00:00` offset instead -- all without
+  ever producing an Invalid Date. History/Results-header/Clusters-
+  header dates were spot-checked after the change and show the same
+  local times as before for the same existing analyses (the
+  serialisation format changed; the moment in time didn't).
+- **2. Quiet the backend.** `LOG_LEVEL` (default `INFO`) already
+  existed in `main.py` (`logging.basicConfig(level=os.environ.get(
+  "LOG_LEVEL", "INFO")...)`) -- nothing to add there. What was
+  missing: `backend/.env.example` (new, no secrets) documenting it,
+  and the three unconditional `print()` calls that bypassed logging
+  entirely regardless of level: `api/routes/player.py`'s per-request
+  SHAP timing line and `db/crud.py`'s two cache-hit/computed lines,
+  all now `logger.debug(...)` (no `print()`/chatter calls left
+  anywhere outside the training-only functions in `core/model.py`,
+  which are out of scope -- not part of the request-serving runtime).
+  Verified on a scratch `uvicorn --port 8001` instance with output
+  redirected to a file (so I could actually read it, unlike the
+  shared dev instance on :8000): default `INFO` env, requested an
+  uncached player -> **zero** `get_or_compute_shap`/`[player]` lines
+  in the log. Restarted with `LOG_LEVEL=DEBUG` -> both lines came
+  back exactly as before, same wording. Re-ran the Phase 4.2.3
+  two-concurrent-requests SHAP-lock race on that same `DEBUG` instance
+  (one "computed" + one "cache hit", 11 rows, no crash, no
+  duplicates) -- the lock itself is untouched, only its log calls
+  changed from `print` to `logger.debug`.
+- **3. End-to-end pass** (Playwright script kept in the OS temp dir,
+  not the repo; analyses 12 and 18 never touched -- confirmed by
+  direct DB query before and after). Uploaded
+  `real_sample_124.csv` fresh through the real UI -> new throwaway
+  **analysis 22**:
+
+  | step | time |
+  |---|---|
+  | upload -> navigated to `/results/22` | 0.41s |
+  | results page rendered | 0.08s |
+  | opened top-ranked player (`r71`), SHAP loaded | 2.73s |
+  | opened `/clusters?analysis=22` | 0.15s |
+  | opened `/history`, confirmed analysis 22 listed **first** | 0.13s |
+  | deleted analysis 22 via the UI dialog, row gone | 0.52s |
+  | error panel: wrong file type (`notes.txt`) | 0.10s |
+  | error panel: missing column (`missing_col.csv`) | 0.12s |
+  | error panel: 5,000+ rows (new fixture, 5,500 rows, 670 KB -- `valid_5000.csv` is exactly 5,000 and wouldn't trip `> MAX_ROWS`) | 0.12s |
+
+  All three error panels showed the expected plain-language messages
+  verbatim: *"'notes.txt' is not a .csv file."*, *"Missing required
+  column(s): yaw_jerk"*, *"'too_many_rows_5500.csv' has 5500 player
+  rows; the limit is 5000 per upload."* DB check after: analysis 22
+  gone, 0 orphan player rows; analyses 12 (8 players) and 18 (124
+  players) both unchanged. No `pageerror`; the only `console.error`
+  lines were the browser's own unavoidable resource-load logs for the
+  two *backend-validated* failures (422s), same pattern as every
+  prior phase's error-path testing.
+- **4. Repo readiness.**
+  Runtime-required files (everything `main.py`'s `lifespan()` loads at
+  startup, plus what `POST /analyze` touches -- traced through
+  `core/inference.py`, `core/clustering.py`, `core/explainer.py`,
+  `core/model.py`):
+
+  | file | size | tracked? |
+  |---|---|---|
+  | `backend/trained_models/isolation_forest.pkl` | 3.1 MB | tracked |
+  | `backend/trained_models/umap_model.pkl` | 5.7 MB | tracked |
+  | `backend/trained_models/kmeans.pkl` | 43.5 KB | tracked |
+  | `backend/trained_models/autoencoder.pt` | 4.4 KB | tracked |
+  | `backend/trained_models/scaler.pkl` | 0.8 KB | tracked |
+  | `backend/trained_models/autoencoder_config.json` | 0.3 KB | tracked |
+  | `backend/trained_models/scoring_config.json` | 0.6 KB | tracked |
+  | `backend/trained_models/archetype_names.json` | 1.2 KB | tracked |
+  | `backend/data/features_hybrid.csv` | 1.7 MB | **untracked (gitignored)** |
+  | `backend/data/splits/X_train.npy` | 825 KB | **untracked (gitignored)** |
+  | `backend/data/splits/y_train.npy` | 75 KB | **untracked (gitignored)** |
+  | `backend/data/splits/X_test.npy` | 206 KB | **untracked (gitignored)** |
+  | `backend/data/splits/y_test.npy` | 19 KB | **untracked (gitignored)** |
+  | `backend/data/splits/X_train_cleaned.npy` | 733 KB | **untracked (gitignored)** |
+  | `backend/data/splits/y_train_cleaned.npy` | 67 KB | **untracked (gitignored)** |
+
+  **Flagged**: all 7 `backend/data/*` rows above are required at
+  startup (`main.py`'s `lifespan()` calls `init_explainer()`
+  unconditionally, which calls `get_cleaned_train_test_data()`, which
+  loads `X_test.npy`/`y_test.npy` unconditionally and then either the
+  two `*_cleaned.npy` files or, if those are missing, `X_train.npy`/
+  `y_train.npy`/`features_hybrid.csv` to recompute them) but all fall
+  under `.gitignore`'s blanket `data/` rule (meant for the large raw
+  per-tick dumps, not these small reference fixtures) -- confirmed via
+  `git check-ignore -v`. `trained_models/` escapes the separate
+  `models/` rule only because the directory is literally named
+  `trained_models`, not `models` -- gitignore doesn't do substring
+  matching, so this is luck, not a deliberate carve-out.
+  **Over 50 MB** (found while sizing `backend/data/`, not itself in
+  the runtime-required list above, but flagged per the task):
+  `backend/data/legit/legit.npy` (~1.07 GB) and `backend/data/
+  cheaters/cheaters.npy` (~220 MB) -- both gitignored, both
+  training/notebook-only (Phase 1/2 raw per-tick arrays; not imported
+  by any request-serving code path I traced), so their size doesn't
+  bloat the actual git repo, but they're real local disk weight worth
+  knowing about.
+  `argus.db`, `node_modules`, `.env`, `__pycache__`, `dist` -- all
+  confirmed ignored (`git check-ignore -v`): `argus.db` by
+  `.gitignore:31`, `node_modules`/`dist` by `frontend/.gitignore`,
+  `.env`/`__pycache__` by the root `.gitignore`. `backend/.env.example`
+  (new this phase) is NOT ignored (the `.env` pattern matches that
+  exact name only, not `.env.example`).
+
+  **Clean-clone test** (`git clone --branch build /d/ARGUS` into a
+  fresh OS temp dir -- the local repo, not a copy, HEAD and
+  `origin/build` were identical at the time): `uv sync` **succeeded**
+  cleanly. Starting the backend (`uv run uvicorn main:app --app-dir
+  backend --port 8002`) then failed **immediately**, before even
+  reaching the missing-data-files problem:
+  ```
+  ModuleNotFoundError: No module named 'cleanlab'
+  ```
+  `core/model.py` does `from cleanlab.filter import find_label_issues`
+  at module level (so every import of `core.model`, which is
+  everything, needs it), but `cleanlab` is **not declared in
+  `pyproject.toml` or `uv.lock`** -- confirmed by grepping the
+  committed files for it (no match in either). It's installed in this
+  session's own long-lived `.venv` (cleanlab 2.9.0, confirmed by
+  import), evidently via a bare `uv pip install`/similar that was
+  never turned into a tracked dependency, so it silently works here
+  but `uv sync` on any other machine would not install it.
+  To see what happens *next*, I `uv pip install cleanlab` **inside
+  the disposable clone's own `.venv` only** (not this repo, not
+  committed, purely to continue the diagnostic) and restarted: it got
+  further, through model loading, into `lifespan()`'s
+  `init_explainer()`, then failed again exactly as predicted from the
+  table above:
+  ```
+  FileNotFoundError: [Errno 2] No such file or directory:
+  '...\argus_clone\backend\data\splits\X_test.npy'
+  Application startup failed. Exiting.
+  ```
+  The server process exited both times; `GET /health` and
+  `POST /analyze` were never reachable (connection refused) in either
+  attempt, so they could not be exercised at all. Nothing in the real
+  repo was changed by either diagnostic step -- the clone is a
+  throwaway directory, still sitting in the OS temp dir, not reused
+  for anything else in this session.
+  Versions used: **Python 3.11.15**, **Node v24.16.0**, **uv
+  0.11.20**. Start commands (from the repo root): backend --
+  `uv run uvicorn main:app --reload --app-dir backend` (per `main.py`'s
+  own docstring); frontend -- `npm install` then `npm run dev` (from
+  `frontend/`, `package.json`'s `dev` script runs `vite`). Separately
+  noted: `README.md` is currently empty, so these commands exist only
+  as code comments, not onboarding docs -- not fixed (read-only per
+  the task), just observed.
+- Files changed: `backend/api/schemas.py`, `backend/api/routes/
+  player.py`, `backend/db/crud.py`, `frontend/src/lib/dates.js`; new
+  `backend/.env.example`. No commits.
+
+## Phase 4.3b — Make the repo runnable from a clean clone
+
+- **Step 1 findings**: `init_explainer()` only ever used
+  `get_cleaned_train_test_data()` for one thing: a deterministic
+  100-row legit-only background sample
+  (`np.random.RandomState(42).choice(...)`) for `shap.KernelExplainer`.
+  `X_test`/`y_test` were loaded unconditionally by that function but
+  the values were *discarded* (`_, _ = get_cleaned_train_test_data()`)
+  -- dead weight at startup. All 7 `backend/data/*` files were only
+  reachable through that one call. `cleanlab.filter.find_label_issues`
+  was imported at module level in `core/model.py`, so every backend
+  startup paid for it even though only the (bypassable) recompute path
+  used it. `RandomForestClassifier`/`cross_val_predict`/
+  `train_test_split`/`roc_auc_score` are training-only too but don't
+  add a new package (scikit-learn is already a runtime dep for
+  `IsolationForest`/`scaler.pkl`), so left alone.
+- **Fix a**: `scripts/export_runtime_artifacts.py` (new, committed)
+  reproduces that exact 100x11 sample once and writes
+  `backend/trained_models/shap_background.npy` (**8.7 KB**).
+  `core/explainer.py`'s `init_explainer()` now just
+  `np.load(MODELS_DIR / "shap_background.npy")` -- no more
+  `get_cleaned_train_test_data()` call, no more `backend/data/*` reads
+  at startup.
+- **Fix b**: `cleanlab` moved into `[project.optional-dependencies]
+  train` in `pyproject.toml` (it was never declared anywhere before --
+  silently present only in this session's long-lived `.venv`);
+  `uv.lock` regenerated. `core/model.py`'s cleanlab import moved
+  inside `get_cleaned_train_test_data()` (lazy) so importing
+  `core.model` for `FEATURE_ORDER`/`Autoencoder` never needs it.
+  Confirmed in the clean clone (below): default `uv sync` does not
+  install cleanlab; `import cleanlab` fails there.
+- **Fix c**: `git check-ignore -v` on the 4 new paths (the artifact,
+  the export script, `sample_data/demo_players.csv`,
+  `sample_data/README.md`) returned nothing -- none ignored. The large
+  training arrays (`legit.npy`/`cheaters.npy`/`splits/*`) are
+  untouched, still caught by the existing `data/` rule.
+- **Fix d**: `sample_data/demo_players.csv` regenerated from
+  `backend/data/features_hybrid.csv` with the identical
+  `sample(n=124, random_state=42)` call Phase 4.2.2b used --
+  byte-for-byte diffed against the existing `real_sample_124.csv`
+  fixture: **identical**. `sample_data/README.md` added with the
+  exact required wording. `POST /analyze` accepted it as-is (200,
+  same scores as every other test below).
+- **Acceptance test (exact equality)**: captured the full `/analyze`
+  response for `real_sample_124.csv` and the full SHAP output for 3
+  players (top `r71`, mid `r61`, bottom `r37`) on the OLD code
+  (temporarily `git stash`-reverted `core/model.py`/`core/
+  explainer.py` back to pre-4.3b, let the dev server reload, deleted
+  the throwaway analysis, captured), then restored the 4.3b changes,
+  reloaded, re-posted the same file, and recaptured. Diffed by
+  `player_id` (not DB row/analysis id, which legitimately differs):
+
+  | quantity | max abs diff | threshold | result |
+  |---|---|---|---|
+  | `ensemble_score` (124 players) | 0.00e+00 | 1e-9 | PASS |
+  | `if_score` | 0.00e+00 | 1e-9 | PASS |
+  | `ae_score` | 0.00e+00 | 1e-9 | PASS |
+  | `umap_x` | 0.00e+00 | 1e-9 | PASS |
+  | `umap_y` | 0.00e+00 | 1e-9 | PASS |
+  | `cluster_id`/`rank`/`is_flagged`/`archetype_name` | 0 mismatches | exact | PASS |
+  | SHAP `shap_value` (3 players x 11 features) | 0.00e+00 | 1e-6 | PASS |
+  | SHAP `feature_rank` | 0 mismatches | exact | PASS |
+
+  Byte-identical everywhere -- no revert needed.
+- **Clean-clone proof**: `git clone --branch build` (local path) into
+  an OS temp dir; changes applied via `git add -A && git diff --cached
+  --binary > patch` in the real repo (then `git reset` to unstage,
+  leaving the real repo exactly as before) and `git apply patch` in
+  the clone -- applied cleanly, including the binary `.npy` artifact
+  (diffed byte-identical against the real repo's copy afterward).
+  - `uv sync` (no `--extra train`): succeeded; confirmed `import
+    cleanlab` then fails in that venv.
+  - Deleted a leftover `argus.db` from an earlier (Phase 4.3) failed
+    attempt in this same clone dir before this run, to prove the next
+    one is genuinely fresh: absent before starting the backend,
+    present after -- the clone creates its own DB, no dependency on
+    the real `argus.db`.
+  - `uv run uvicorn main:app --app-dir backend --port 8003`: started,
+    `GET /health` → 200. `POST /analyze` with `sample_data/
+    demo_players.csv` → 200, `analysis_id=1` (fresh DB), same
+    `ensemble_score` values as every other run. `GET /player/r71
+    ?analysis_id=1` (first SHAP computation in this process) → 200 in
+    **2.54s**. `GET /clusters?analysis_id=1` → 200, archetype
+    descriptions present.
+  - Frontend: `npm ci` (74 packages, 0 vulnerabilities) then `npm run
+    build` → succeeded in 1.2s.
+  - Precise cold-start wall-clock time wasn't captured cleanly (a
+    `bc`-based timing command failed on this shell; re-timing wasn't
+    worth another full model-load cycle given everything else already
+    passed) -- qualitatively consistent with the ~10-15s seen loading
+    models/warmup in every other instance started this session.
+- Files changed: `backend/core/explainer.py`, `backend/core/model.py`,
+  `pyproject.toml`, `uv.lock`; new `scripts/export_runtime_artifacts.py`,
+  `backend/trained_models/shap_background.npy` (8.7 KB),
+  `sample_data/demo_players.csv`, `sample_data/README.md`. No commits.
+  Nothing reverted -- the acceptance test passed outright.

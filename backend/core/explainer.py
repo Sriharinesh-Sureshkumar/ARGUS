@@ -9,16 +9,30 @@ reconstructed per request. explain_player() calls init_explainer()
 internally (idempotent) so it is always safe to call directly, but
 backend/main.py's startup should call init_explainer() eagerly so the
 first request doesn't pay that cost.
+
+Phase 4.3b: that background sample used to be rebuilt at every startup
+via core.model.get_cleaned_train_test_data() -- which needs cleanlab
+plus backend/data/features_hybrid.csv and the splits, none of which
+are needed anywhere else at runtime. Since the sample is fully
+deterministic (fixed random_state=42 over the cleaned, legit-only
+training rows), it's now precomputed once by
+scripts/export_runtime_artifacts.py into trained_models/
+shap_background.npy and just loaded here -- byte-identical to what
+the old code computed on the fly, confirmed by the Phase 4.3b
+equality test in docs/PROJECT_LOG.md.
 """
 
 import threading
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import shap
 
 from core.inference import load_models, score_players
-from core.model import FEATURE_ORDER, get_cleaned_train_test_data
+from core.model import FEATURE_ORDER
+
+MODELS_DIR = Path(__file__).resolve().parent.parent / "trained_models"
 
 # Plain-language templates for all 11 features, real units (degrees,
 # ms, %) -- verbatim from Phase 3.1 (05_shap_explainability.ipynb Cell 6).
@@ -77,14 +91,7 @@ def init_explainer() -> None:
             return
 
         _models = load_models()
-
-        X_train_cleaned, y_train_cleaned, _, _ = get_cleaned_train_test_data()
-        X_train_legit = X_train_cleaned[y_train_cleaned == 0]
-
-        rng = np.random.RandomState(42)
-        background_idx = rng.choice(len(X_train_legit), size=100, replace=False)
-        _background = X_train_legit[background_idx]
-
+        _background = np.load(MODELS_DIR / "shap_background.npy")
         _explainer = shap.KernelExplainer(_score_fn, _background)
 
 
