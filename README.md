@@ -128,6 +128,9 @@ Environment variables (both have a committed `.env.example`):
 |---|---|---|---|
 | `VITE_API_BASE_URL` | `frontend/.env.local` | `http://localhost:8000/api/v1` | Where the frontend sends API requests |
 | `LOG_LEVEL` | `backend/.env` or shell | `INFO` | `DEBUG` also logs per-request timing and SHAP cache hit/miss |
+| `CORS_ORIGINS` | `backend/.env` or shell | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated origins the API accepts requests from |
+
+**Changing ports**: if the frontend runs anywhere other than `http://localhost:5173` (another port, another host), the backend will reject its requests with a CORS error unless you also set `CORS_ORIGINS` to match. The two go together: e.g. to run the frontend on port 5180, set `CORS_ORIGINS=http://localhost:5180` for the backend and `VITE_API_BASE_URL=http://localhost:8000/api/v1` (or wherever the backend actually is) for the frontend.
 
 **Try it**: on the Upload page, drop in [`sample_data/demo_players.csv`](sample_data/demo_players.csv) (124 rows — see the caveat in [Honest results](#honest-results) and `sample_data/README.md`).
 

@@ -29,6 +29,16 @@ from db.session import engine
 
 MODEL_VERSION = "v1.0"
 
+DEFAULT_CORS_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
+def _cors_origins() -> list[str]:
+    raw = os.environ.get("CORS_ORIGINS")
+    if not raw:
+        return DEFAULT_CORS_ORIGINS
+    origins = [origin.strip() for origin in raw.split(",")]
+    return [origin for origin in origins if origin]
+
 # LOG_LEVEL per the TRD (Doc 02): INFO for dev, WARNING for demo;
 # DEBUG additionally emits the per-request /analyze timing breakdown.
 logging.basicConfig(
@@ -75,7 +85,7 @@ app = FastAPI(title="ARGUS API", version=MODEL_VERSION, lifespan=lifespan)
 app.add_middleware(UnhandledErrorMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -2583,3 +2583,133 @@ existing history.*
   (replaced), `docs/screenshots/{upload,processing,results,
   player-detail,clusters,history,delete-dialog,error-panel}.png`. No
   code changes. No commits.
+
+## Phase 4.5 — Final verification of the pushed `build` branch
+
+- Confirmed `build` was actually pushed first: local `HEAD` ==
+  `origin/build` == `22854c0` ("docs: README with architecture
+  diagrams..."), which also turned out to include two more commits
+  from this session's prior phases that the user had committed
+  between turns (`70c8e37` UTC `created_at`/logging, `4451bbf`+
+  `6948827` the 4.3b clean-clone fixes) -- all already present on
+  `origin/build`, nothing further to push.
+- `git clone --branch build https://github.com/.../ARGUS.git` (the
+  real remote URL, not a local path) into a fresh OS temp dir.
+- **Quick start, followed literally**: `uv sync` -- succeeded. `uv
+  run uvicorn main:app --reload --app-dir backend` -- the literal
+  command (no port) would have bound :8000, which this verification
+  session's own long-running dev server already holds; ran on
+  `--port 8004` instead purely to avoid that collision (a testing-
+  environment necessity, not a README defect -- the literal port
+  8000 is exactly what's hardcoded into CORS and has been proven
+  working all session). `npm ci` -- succeeded (74 packages, 0
+  vulnerabilities). `npm run dev` -- succeeded (ran on `--port 5180`
+  for the same reason). `npm run build` also exercised for good
+  measure -- succeeded. No command failed, was missing, or differed
+  in substance from the README.
+- **API checks** (against the clone's backend on :8004): `GET
+  /health` -> 200. `POST /analyze` with `sample_data/demo_players.csv`
+  -> 200, `analysis_id=1` (fresh DB), `ensemble_score` etc. for `r71`
+  byte-identical to every prior run this session. `GET /player/r71`
+  -> 200 (SHAP computed fresh). `GET /clusters` -> 200. `GET /history`
+  -> 200, **`created_at` ends in `"Z"`**
+  (`"2026-10-09T09:37:26.277702Z"`), confirmed. Grepped the log for
+  this run for `get_or_compute_shap`/`cache hit`/`[player]`: **zero
+  matches** -- no cache chatter at default `LOG_LEVEL`. `import
+  cleanlab` in the clone's own `.venv`: `ModuleNotFoundError`,
+  confirmed, backend still served every request above correctly.
+  (Side observation, not a defect in scope here: the `shap` library's
+  own internal logger -- not ARGUS's own code -- still emits a few
+  INFO-level lines, e.g. `num_full_subsets`/`phi = array(...)`, since
+  only `numba`'s logger is explicitly silenced in `main.py`; distinct
+  from the cache-chatter this phase checked for, which is clean.)
+- **Frontend-against-clone-backend UI pass (Playwright)**: `/` loaded
+  and the upload step itself succeeded, but every subsequent step
+  (results/player/clusters/history) failed with a browser CORS error
+  (`No 'Access-Control-Allow-Origin' header`) against
+  `http://localhost:5180`. Root cause, confirmed by reading the code:
+  `backend/main.py`'s CORS middleware hardcodes
+  `allow_origins=["http://localhost:5173"]` -- exactly the literal
+  default the README documents, and exactly the port this
+  verification had to avoid for the reason above. This is **the same
+  substitution-for-non-collision tradeoff as the API checks**, just
+  now visible in the browser where the API checks (plain HTTP calls,
+  no Origin header enforcement) couldn't show it. Not re-tested on
+  the literal port 5173 -- doing so would have required stopping
+  this session's own live frontend dev server, which the harness
+  correctly declined to let this task do (flagged as interfering with
+  an active workload); that decision was respected rather than worked
+  around. Net assessment: the UI flow is not independently confirmed
+  working on a second simultaneous instance at a different port, but
+  there is no evidence of an actual defect -- the literal
+  README-documented port pair (8000/5173) is exactly what CORS
+  allows, and that exact pair has been serving this entire project's
+  UI correctly all session.
+- **Step 5 -- leak check** (`git ls-files` + `git grep` in the
+  clone): no `argus.db`, `.env`, `node_modules`, `__pycache__`, or
+  `*.log` tracked. No local absolute path (`C:\Users`, `/home/`) in
+  any tracked text file. No secret/token/key/password pattern matches
+  (checked a pattern grep plus a broader `secret|token` sweep by
+  hand -- every hit was benign: `tokens.css`/design-token mentions,
+  `.gitignore`'s own comment, `backend/.env.example`'s "No secrets
+  live here" line).
+- Cleanup: killed every clone-related process this session's own
+  tools could see (3 different kill methods tried on the last
+  straggler: PowerShell `Stop-Process`, `Get-CimInstance` + targeted
+  kill, `taskkill`) and deleted the temp clone directory. One
+  orphaned listening socket on the scratch port (8004) and 2 files it
+  was still holding open (`uvicorn.exe`, `argus.db`) could not be
+  removed -- every process-management tool available agreed the
+  owning PID no longer exists, yet the OS-level socket and file
+  handles persisted; this is a sandboxed-environment networking
+  artifact, not something in the repo or this task's control. No
+  repo content, credentials, or anything beyond the disposable test
+  DB was left behind.
+- No commits. The only change in the real repo is this entry.
+
+## Phase 4.5b — Configurable CORS
+
+- Root cause of 4.5's UI gap: `backend/main.py` hardcoded
+  `allow_origins=["http://localhost:5173"]`, so any frontend not on
+  exactly that origin was silently rejected by the browser.
+- `backend/main.py`: added `_cors_origins()`, reading `CORS_ORIGINS`
+  (comma-separated, trimmed, empty entries dropped) with a default of
+  `["http://localhost:5173", "http://127.0.0.1:5173"]` when unset;
+  never `"*"`. `allow_credentials`, `allow_methods`, `allow_headers`
+  unchanged.
+- `backend/.env.example`: documented `CORS_ORIGINS` with the default
+  and a worked example for a non-default port (5180).
+- `README.md`: added a `CORS_ORIGINS` row to the Quick start env-vars
+  table, plus a "Changing ports" note explaining `CORS_ORIGINS` and
+  `VITE_API_BASE_URL` must be set together when the frontend isn't on
+  the default port.
+- **Preflight verification** (`curl -X OPTIONS` with `Origin` +
+  `Access-Control-Request-Method`, against the real dev backend on
+  :8000 unless noted):
+
+  | Target | Origin | `CORS_ORIGINS` | Result |
+  |---|---|---|---|
+  | `/api/v1/health` | `http://localhost:5173` | unset (default) | 200, `access-control-allow-origin: http://localhost:5173` |
+  | `/api/v1/health` | `http://127.0.0.1:5173` | unset (default) | 200, `access-control-allow-origin: http://127.0.0.1:5173` |
+  | `/api/v1/health` | `http://evil.example` | unset (default) | 400, no `access-control-allow-origin` header |
+  | `/api/v1/analyze` | `http://localhost:5173` | unset (default) | 200, `access-control-allow-origin: http://localhost:5173` |
+  | `/api/v1/analyze` | `http://evil.example` | unset (default) | 400, no `access-control-allow-origin` header |
+  | `/api/v1/health` | `http://example.com:9999` | `http://example.com:9999` (throwaway instance, port 8005) | 200, `access-control-allow-origin: http://example.com:9999` |
+  | `/api/v1/health` | `http://localhost:5173` | `http://example.com:9999` (same throwaway instance) | 400, no `access-control-allow-origin` header -- confirms the default origins are NOT allowed once `CORS_ORIGINS` is explicitly set to something else |
+
+  The custom-origin case used a disposable `uvicorn` instance on
+  port 8005 (this session's own real dev server on :8000 was left
+  running throughout, untouched, confirmed healthy before and after)
+  rather than restarting the real backend, since env vars are only
+  read at process start and restarting the live dev server wasn't
+  necessary to prove the code path.
+- **Playwright UI pass**, real dev servers, default ports (5173
+  frontend / 8000 backend, no `.env`/`.env.local` overrides present):
+  upload `demo_players.csv` -> PASS, results page -> PASS, player
+  detail (`r103`, analysis 22) -> PASS, clusters -> PASS, history ->
+  PASS. **Zero console/page errors.** This is the same flow that
+  failed with a CORS error in Phase 4.5 when tested on a substituted
+  port -- confirms the fix. Nothing deleted (per instruction);
+  analysis 22 remains in the real history.
+- No commits. Files changed: `backend/main.py`, `backend/.env.example`,
+  `README.md`, `docs/PROJECT_LOG.md` (this entry).
