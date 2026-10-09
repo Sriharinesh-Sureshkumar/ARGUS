@@ -6,6 +6,7 @@ a player's detail page is requested.
 """
 
 import json
+import logging
 import threading
 
 from sqlalchemy import desc
@@ -13,6 +14,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from core.explainer import explain_player
 from db.models import Analysis, Player, SHAPValue
+
+logger = logging.getLogger(__name__)
 
 # Guards the whole check-cache / compute / write-cache sequence in
 # get_or_compute_shap() below. Without it, two concurrent requests for
@@ -148,7 +151,7 @@ def get_or_compute_shap(db: Session, player_row_id: int) -> tuple[list[SHAPValue
             .all()
         )
         if existing:
-            print(f"[get_or_compute_shap] player_row_id={player_row_id}: cache hit ({len(existing)} rows)")
+            logger.debug("[get_or_compute_shap] player_row_id=%s: cache hit (%d rows)", player_row_id, len(existing))
             return existing, True
 
         player = db.query(Player).filter(Player.id == player_row_id).first()
@@ -179,5 +182,5 @@ def get_or_compute_shap(db: Session, player_row_id: int) -> tuple[list[SHAPValue
         for row in shap_rows:
             db.refresh(row)
 
-        print(f"[get_or_compute_shap] player_row_id={player_row_id}: computed ({len(shap_rows)} rows)")
+        logger.debug("[get_or_compute_shap] player_row_id=%s: computed (%d rows)", player_row_id, len(shap_rows))
         return shap_rows, False

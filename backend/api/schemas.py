@@ -6,9 +6,22 @@ in every player-facing schema; `is_flagged` is included only as a
 secondary indicator.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_serializer
+
+
+def _isoformat_z(dt: datetime) -> str:
+    """ISO 8601 with an explicit "Z" suffix (e.g. 2026-10-06T22:29:00.123456Z).
+
+    db/models.py's created_at column is a naive DateTime (SQLite drops
+    tzinfo on the way in) even though it's always written with
+    datetime.now(timezone.utc) -- so a naive value here IS UTC, just
+    missing the marker. This only changes the API response's
+    serialisation, never what's stored (Phase 4.3)."""
+    if dt.tzinfo is None:
+        return dt.isoformat() + "Z"
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class PlayerSummary(BaseModel):
@@ -69,6 +82,10 @@ class HistoryItem(BaseModel):
     player_count: int
     flagged_count: int
     flag_threshold: float
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, dt: datetime) -> str:
+        return _isoformat_z(dt)
 
 
 class ArchetypeSummary(BaseModel):

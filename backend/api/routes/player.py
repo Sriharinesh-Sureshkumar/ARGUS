@@ -6,6 +6,7 @@ db.crud.get_or_compute_shap). Repeat requests for the same player are
 a cache hit -- just a DB read, no recomputation.
 """
 
+import logging
 import time
 
 from fastapi import APIRouter, Depends, Query
@@ -16,6 +17,8 @@ from api.schemas import PlayerDetailResponse, SHAPFeature
 from core.clustering import load_clustering_artifacts
 from db import crud
 from db.session import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -49,9 +52,12 @@ def get_player(player_id: str, analysis_id: int = Query(...), db: Session = Depe
     start_time = time.time()
     shap_rows, cache_hit = crud.get_or_compute_shap(db, player.id)
     elapsed = time.time() - start_time
-    print(
-        f"[player] player_id={player_id} analysis_id={analysis_id}: "
-        f"SHAP {'cache hit' if cache_hit else 'computed'} in {elapsed:.2f}s"
+    logger.debug(
+        "[player] player_id=%s analysis_id=%s: SHAP %s in %.2fs",
+        player_id,
+        analysis_id,
+        "cache hit" if cache_hit else "computed",
+        elapsed,
     )
 
     if not cache_hit:
