@@ -25,7 +25,6 @@ import joblib
 import numpy as np
 import pandas as pd
 import torch.nn as nn
-from cleanlab.filter import find_label_issues
 from sklearn.ensemble import IsolationForest, RandomForestClassifier
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import cross_val_predict, train_test_split
@@ -83,6 +82,13 @@ def get_cleaned_train_test_data(force_recompute: bool = False):
 
     if not force_recompute and cleaned_x_path.exists() and cleaned_y_path.exists():
         return np.load(cleaned_x_path), np.load(cleaned_y_path), X_test, y_test
+
+    # Training-only dependency -- imported here, not at module level, so
+    # merely importing core.model (every backend startup does, for
+    # FEATURE_ORDER/Autoencoder) never requires cleanlab to be
+    # installed. Only this recompute path -- which production no
+    # longer calls, see core/explainer.py -- needs it (Phase 4.3b).
+    from cleanlab.filter import find_label_issues
 
     df = pd.read_csv(DATA_DIR / "features_hybrid.csv")
 
