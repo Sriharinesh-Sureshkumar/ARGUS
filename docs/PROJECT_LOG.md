@@ -1794,3 +1794,257 @@ existing history.*
   `?analysis=18` screenshot), so the Phase 4.2.4b `height={520}`
   override on `ClusterScatter` (added purely to shrink that gap) was
   removed in favour of the component's own default.
+
+## Phase 4.2.5 — History page (table, sort, pagination, delete flow)
+
+- Frontend only; backend untouched except the read-only integrity
+  check in step 4 below. Files added: `frontend/src/components/
+  ConfirmDialog.jsx` (reusable modal -- `role="dialog"`/`aria-modal`,
+  focus moves to Cancel on mount and back to the trigger on unmount, a
+  real Tab-trap keydown handler, Esc/backdrop-click cancel unless
+  `busy`, body scroll locked for as long as it's mounted; rendering it
+  at all IS "open" -- no `open` prop, so there's no `open=false`
+  render to special-case or guard hooks around); `frontend/src/
+  components/history/{HistoryTable,HistorySkeleton}.jsx`; full rebuild
+  of `frontend/src/pages/HistoryPage.jsx` (stub removed). `frontend/
+  src/api/history.js` gained `deleteAnalysis()`; `frontend/src/lib/
+  dates.js` gained `formatAnalysisDateTime()` ("5 Oct 2026, 18:24",
+  sharing the existing naive-UTC "append Z" fix via a new shared
+  `toLocalDate()` helper -- `formatAnalysisDate()`'s behaviour is
+  unchanged); `frontend/src/components/icons.jsx` gained
+  `DocumentIcon`/`TrashIcon`/`CloseIcon`.
+- Table/sort/row-click follow the exact ResultsTable pattern: a real
+  `<table>` with a visually-hidden caption, `SortableHeader` (button +
+  `SortIcon` inside `<th aria-sort>`), and a `<tr onClick>` that
+  ignores clicks landing on the row's own `<a>`/`<button>` or the tail
+  end of a text selection. Default sort `{key: 'created_at', dir:
+  'desc'}` (newest first); clicking a *different* column for the first
+  time defaults to ascending, except `created_at` itself, which
+  defaults back to descending (so re-clicking "Analysed on" after
+  sorting by something else lands on "newest first" again, matching
+  the page's own initial state) -- sort is derived at render
+  (`[...items].sort(...)`), never stored sorted.
+  Client-side pagination reuses `components/results/Pagination.jsx`
+  verbatim (10/page; it already no-ops under 2 pages).
+- Delete flow: `deleteTarget` (the `HistoryItem` being confirmed) is
+  the only thing that makes `<ConfirmDialog>` mount at all.
+  `analysis_not_found` on delete is treated as a successful outcome
+  (the row's already gone from the user's point of view), not an
+  error -- same row-removal path as a real 200. Any other delete
+  failure keeps the dialog mounted with the normalized error shown
+  inline and the Delete button relabelled "Retry" (same `onConfirm`
+  handler). Deleting the row updates `result.data` in place (filters
+  out the id) -- no re-fetch -- and the already-clamped `currentPage =
+  Math.min(page, totalPages)` means a page that becomes empty (or the
+  very last analysis overall) self-corrects/falls through to the empty
+  state on the next render without any extra bookkeeping. The
+  `aria-live="polite"` announcement region is cleared then set on a
+  `setTimeout(0)` so "Analysis deleted" is re-announced even when two
+  deletes in a row produce the exact same sentence (otherwise an
+  unchanged text node wouldn't necessarily fire a second announcement).
+- **Step 4 integrity check** (read-only; analyses 12/18 never
+  touched): POSTed `valid.csv` to `/analyze` fresh -> new analysis_id
+  **19** (50 players, row ids 15321-15370, confirmed 0 `shap_values`
+  rows beforehand). Opened `/results/19/player/p12` once via Playwright
+  (real browser, not curl) to cache that player's SHAP rows server-
+  side. Deleted analysis 19 through the real History UI (trash icon ->
+  confirm "Delete" in the modal). Queried `argus.db` directly
+  afterward:
+  - `analyses` row id=19: **gone**.
+  - `players` rows with `analysis_id=19`: **0** (were 50).
+  - `shap_values` rows with `player_id_fk` in the recorded 15321-15370
+    range (the exact player row ids analysis 19 owned): **0**.
+  - Analyses 12 and 18 both still present and untouched (8 and 124
+    player rows respectively, as before).
+  **No orphan rows in any table.** The schema has exactly 3 tables
+  (`analyses`, `players`, `shap_values` -- there is no separate
+  cluster/UMAP table; `umap_x`/`umap_y`/`cluster_id` live directly on
+  `players`), and `crud.delete_analysis()`'s `db.delete(analysis)`
+  cascades through the ORM relationships
+  (`Analysis.players`/`Player.shap_values`, both
+  `cascade="all, delete-orphan"`) exactly as advertised.
+- Deviations from the mockup:
+  - H1 is the literal spec text "History" (not the mockup's "Past
+    analyses"), per the same precedent as "Behaviour clusters"
+    overriding "Player archetypes" in Phase 4.2.4b; the subtitle below
+    it is still the mockup's "View and manage your previous analyses."
+  - "Error panel with backend stopped" (step 5) was exercised via
+    Playwright route interception (`route.abort()` on `GET /history`)
+    rather than literally killing the shared dev `uvicorn` process --
+    this reaches the identical client-side code path (`normalizeError`'s
+    `network_error` branch, "Cannot reach the ARGUS backend") without
+    taking down a server other verification steps in this same session
+    depend on; screenshotted and confirmed correct.
+- Verified: `npm run build`/`lint` (oxlint) clean; `grep -rnoE
+  '#[0-9a-fA-F]{3,8}\b' frontend/src | grep -v tokens.css` empty.
+  Playwright, 18 real analyses on disk (pagination genuinely exercised
+  with real data, not faked):
+  - All three sorts (File/Analysed on/Players) toggle correctly in
+    both directions (spot-checked against the real filenames/dates/
+    counts shown).
+  - Pagination: "Showing 1-10 of 18" -> page 2 "Showing 11-18 of 18".
+  - Row click (clicked empty space in the row, not the Open link) and
+    the Open `<a>` both navigate to the same `/results/<id>`.
+  - Modal keyboard behaviour: focus lands on Cancel on open; Tab
+    cycles Cancel -> Delete -> Close("x") -> Cancel... (confirmed
+    `document.activeElement` stayed inside `[role=dialog]` after
+    tabbing past the last element); Esc closes it and returns focus to
+    the exact trigger button (`aria-label` matched); a backdrop click
+    also cancels.
+  - 404-on-delete (via route interception on the `DELETE` call only,
+    no real analysis touched): the row disappeared from the list same
+    as a real success.
+  - Empty state (via route interception on `GET /history` returning
+    `[]`, never by deleting real rows): "No analyses yet" + "Upload a
+    CSV" shown, screenshotted.
+  - No `pageerror`/real `console.error` anywhere in the real-backend
+    portion of the run; the only `console.error` lines logged anywhere
+    were the browser's own unavoidable resource-load failure messages
+    for the two *intentionally mocked* responses (the fake 404 and the
+    aborted connection), not JS exceptions.
+
+## Phase 4.2.5b — History table actions columns + delete dialog polish
+
+- Frontend only, no commits. Files: `frontend/src/components/
+  history/HistoryTable.jsx` (Open/Delete split into two columns),
+  `frontend/src/components/ConfirmDialog.jsx` (blurred backdrop, icon
+  prop, `#root` aria-hidden/inert), `frontend/src/pages/
+  HistoryPage.jsx` (passes `icon={<TrashIcon .../>}`).
+- `HistoryTable.jsx`: the combined "Actions" `<td>` became two
+  fixed-width `<col>`s (96px for Open, 64px for the trash button) in
+  the same `table-fixed` `<colgroup>` as the other (percentage-width)
+  columns -- mixing `%` and `px` column widths in `table-fixed` is
+  fine; the fixed ones hold their exact width regardless of table
+  width, which is what stops them ever wrapping or shifting row to
+  row. One `<th colSpan={2}>Actions</th>` spans both in the header
+  row only; each body row still gets its own divider between the Open
+  and Delete cells from the existing `divide-x` on `<tr>` (colSpan
+  only collapses the header's divider, not the body's). The trash
+  button is now `h-9 w-9` (36x36, confirmed via a live bounding-box
+  check) with `inline-flex items-center justify-center`, so it's a
+  comfortable hit target at a fixed size rather than a bare icon the
+  size of its glyph. Whole-row click, the real `Open` `<Link>`, and
+  the trash button's `stopPropagation()` are all unchanged.
+- `ConfirmDialog.jsx`:
+  - Backdrop is `bg-base/60 backdrop-blur-[6px]`, fading in over 150ms
+    via a `mounted` flag flipped on the next animation frame (so the
+    initial `opacity-0` actually paints before the transition to
+    `opacity-100` starts -- setting both in the same tick would let
+    React/the browser collapse them into one paint with nothing to
+    animate). `motion-reduce:duration-0` drops the animation (it still
+    ends in the same place, just instantly) under `prefers-reduced-
+    motion: reduce`; a `[@media(prefers-reduced-transparency:reduce)]:`
+    arbitrary-variant pair swaps in `bg-base/90` and removes the blur
+    under that media feature, per spec.
+  - New optional `icon` prop, rendered inside a `h-12 w-12 rounded-full
+    border-2 border-accent-red text-accent-red` circle (the icon
+    itself just needs `stroke="currentColor"`, same as every other
+    icon in this codebase, to pick up the red automatically).
+    `HistoryPage` passes `<TrashIcon className="h-5 w-5" />`.
+  - Panel reordered to match the mockup: icon circle top-left, close
+    "x" top-right (unchanged position), heading, body text, buttons
+    bottom-right (unchanged). `max-w-sm` (24rem), within the requested
+    24-26rem range.
+  - `#root` (the whole app, a sibling of this portal since both mount
+    under `document.body`) now gets `aria-hidden="true"` and
+    `.inert = true` for as long as the dialog is mounted, restored on
+    unmount (and the previous `aria-hidden` state, if the root
+    somehow already had one, is preserved rather than blindly
+    cleared) -- the task's "if that is already how it works" didn't
+    apply since it wasn't implemented yet, so this was added rather
+    than skipped. Focus trap, Esc, backdrop-click-cancel (not while
+    `busy`), focus return, body scroll lock, the in-flight "Deleting..."
+    state, and the inline error-with-retry are all unchanged from
+    Phase 4.2.5.
+- Verified: `npm run build`/`lint` (oxlint) clean; `grep -rnoE
+  '#[0-9a-fA-F]{3,8}\b' frontend/src | grep -v tokens.css` empty (the
+  backdrop/blur/opacity values are all arbitrary Tailwind *values* on
+  existing colour tokens, e.g. `bg-base/60`, `backdrop-blur-[6px]` --
+  no new hex). Playwright, real data (18 analyses), no delete
+  confirmed:
+  - `Actions` header `colSpan` reads `"2"`; Open link and trash button
+    bounding boxes confirmed as two separate, non-overlapping column
+    cells; trash button measured exactly 36x36px.
+  - Backdrop's computed `backdrop-filter` is `"blur(6px)"`; a point
+    over the navbar's "Upload" link resolved (via
+    `elementFromPoint`) to the dialog's backdrop element, confirming
+    the backdrop covers the navbar, not just the content area.
+  - `#root` had `aria-hidden="true"` and `inert: true` while the
+    dialog was open, both cleared after Esc closed it.
+  - Focus landed on Cancel on open, stayed inside the dialog across 4
+    Tabs, and returned to the exact trigger button (`aria-label`
+    matched) after Esc.
+  - No `pageerror`/`console.error` anywhere in the run.
+  - Screenshots of the table's right side (hovered row, Open/trash
+    visibly separate) and the full-page open dialog (navbar visibly
+    blurred behind it) both compared against `docs/mockups/
+    history.png` -- close match on both.
+- Nothing done differently from the mockup/spec this round -- the
+  only judgment calls were implementation details (exact Tailwind
+  utilities for the backdrop, `max-w-sm` vs. a slightly larger value
+  within the given range, and adding `inert`/`aria-hidden` since it
+  didn't already exist rather than skipping it), not visible
+  deviations.
+
+## Phase 4.2.5c — History table: drop the Open column, filename is the link
+
+- Deliberate, user-requested deviation from `docs/mockups/history.png`
+  (stated as such in the task). Frontend only, one file touched:
+  `frontend/src/components/history/HistoryTable.jsx`. No change to
+  `icons.jsx` was needed -- `TrashIcon`/`DocumentIcon` already existed
+  and just got rendered bigger via `className`.
+- Columns are now File / Analysed on / Players / Delete (no separate
+  Open column, so no `colSpan` on the header either -- it reverted to
+  one plain `<th>` per column). The Delete header cell is visually
+  empty with a `sr-only` "Delete" label, so the column still has an
+  accessible name without a visible one.
+- The filename itself is now the `<Link to="/results/<id>">` --
+  `underline decoration-content-muted underline-offset-4` at rest.
+  Hovering **anywhere on the row** (not just the link text) switches
+  the filename to the link token (`text-link`/`decoration-link`) via
+  Tailwind's `group`/`group-hover:` pattern (`group` added to the
+  `<tr>`), separately from `focus-visible:text-link` /
+  `focus-visible:decoration-link` on the link's own keyboard focus --
+  the row-highlight background was already on the `<tr>` and needed no
+  change. Verified both are the right tokens via computed style: rest
+  = `rgb(242,243,242)`/`rgb(126,124,121)` (content/content-muted),
+  hovered = `rgb(161,181,226)` for both text and decoration (the link
+  token, `#A1B5E2`). First pass only had `hover:text-link` on the `<a>`
+  itself, which only fired when the cursor was literally over the
+  underlined text, not the rest of the row -- caught by checking the
+  computed colour after `row.hover()` (not just eyeballing a
+  screenshot) and fixed with `group-hover:`.
+  The whole-row click handler, the trash button's `stopPropagation()`,
+  and the row's `cursor-pointer` are all unchanged.
+- File icon: `h-[22px] w-[22px]` (was `h-4 w-4`/16px), `gap-3` (12px)
+  from the filename, vertically centered via the existing `flex
+  items-center` row. Delete button: `h-10 w-10` (40x40, was `h-9 w-9`)
+  containing an `h-[22px] w-[22px]` `TrashIcon` (was `h-4 w-4`),
+  `text-accent-red/80` at rest -> `hover:text-accent-red`/
+  `focus-visible:text-accent-red` (full opacity) with
+  `hover:bg-accent-red/12` and `rounded-md`. Delete column width
+  `72px` (was 64px) in the same fixed-`<col>` style as before.
+  Row height measured **48.5px** live (well under the 56px ceiling),
+  nothing wraps.
+- Verified: `npm run build`/`lint` (oxlint) clean; `grep -rnoE
+  '#[0-9a-fA-F]{3,8}\b' frontend/src | grep -v tokens.css` empty (every
+  new value here is an opacity-modified existing token, e.g.
+  `text-accent-red/80`, `hover:bg-accent-red/12`, or a Tailwind
+  arbitrary *size* like `h-[22px]`, never a new colour). Playwright,
+  real data, no delete confirmed:
+  - 0 stray "Open" links remain; the Delete header's accessible name
+    is "Delete" (sr-only span) with empty visible text.
+  - File icon measured 22x22px; delete button 40x40px containing a
+    22x22px icon.
+  - Row hover: background `rgb(52,46,33)` (`row-highlight`); filename
+    link colour/decoration both switch to the link token (see above).
+  - Tab order from a row's filename: filename(row N) -> trash(row N)
+    -> filename(row N+1) -> trash(row N+1), confirmed across two rows.
+  - Both the empty-area row click and a direct click on the filename
+    link navigate to the same `/results/<id>`.
+  - The delete dialog still opens from the trash button (focus -> Enter)
+    and, on Esc, closes and returns focus to that exact trash button
+    (`aria-label` matched) -- unchanged from Phase 4.2.5b.
+  - No `pageerror`/`console.error` anywhere in the run.
+  - Screenshots taken at rest, with a hovered row, with keyboard focus
+    on a filename link, and with keyboard focus on a trash button.

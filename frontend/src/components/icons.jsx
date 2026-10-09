@@ -65,3 +65,33 @@ export function FeatureIcon(props) {
     </svg>
   )
 }
+
+// A CSV/file row icon and the History empty-state's large placeholder.
+export function DocumentIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" {...props}>
+      <path strokeLinejoin="round" d="M6.5 3.5h7l4 4v13a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 3.5v4h4" />
+    </svg>
+  )
+}
+
+// Delete-analysis trash can.
+export function TrashIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 6.5h15M9.5 6.5V4.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 6.5 7.3 19a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12.5" />
+      <path strokeLinecap="round" d="M10 10.5v6M14 10.5v6" />
+    </svg>
+  )
+}
+
+// Modal dismiss "x".
+export function CloseIcon(props) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true" {...props}>
+      <path strokeLinecap="round" d="m6 6 12 12M18 6 6 18" />
+    </svg>
+  )
+}

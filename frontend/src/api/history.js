@@ -12,3 +12,8 @@ export function getAnalysis(analysisId, { signal } = {}) {
 export function listHistory({ signal } = {}) {
   return axios.get(`${API_BASE_URL}/history`, { signal }).then((response) => response.data)
 }
+
+// DELETE /history/{analysisId} -> DeleteResponse ({deleted, analysis_id, message}).
+export function deleteAnalysis(analysisId, { signal } = {}) {
+  return axios.delete(`${API_BASE_URL}/history/${analysisId}`, { signal }).then((response) => response.data)
+}
