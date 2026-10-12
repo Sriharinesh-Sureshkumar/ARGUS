@@ -2713,3 +2713,65 @@ existing history.*
   analysis 22 remains in the real history.
 - No commits. Files changed: `backend/main.py`, `backend/.env.example`,
   `README.md`, `docs/PROJECT_LOG.md` (this entry).
+
+## Phase 5.1 — Model card
+
+- `docs/MODEL_CARD.md` written (new file): model overview, training
+  data, architecture/hyperparameters, evaluation, known limitations,
+  ethical/misuse considerations, reproduction steps, and an explicit
+  "Not recorded in the repo" section. Every fact cited to a file in
+  this repo; nothing invented or rounded.
+- Sourced beyond `README.md`/`docs/PROJECT_LOG.md` by reading code and
+  artifacts directly: `backend/core/model.py` (Isolation Forest/
+  autoencoder architecture — found the production `isolation_forest.pkl`
+  was retrained with `n_estimators=300, max_features=0.5` per Phase
+  2.2, but `model.py`'s own `train_isolation_forest()` is a stale
+  script still hardcoding `n_estimators=200` — flagged explicitly in
+  the card rather than silently using the script's value),
+  `backend/core/inference.py`/`explainer.py`/`clustering.py` (sigmoid
+  normalization formula, SHAP background construction, K-Means/UMAP
+  pipeline), `backend/trained_models/scoring_config.json`/
+  `autoencoder_config.json`/`archetype_names.json` (exact normalization
+  constants, ensemble weight, threshold stats, per-cluster cheater
+  rates), `backend/notebooks/03_autoencoder.ipynb` (optimizer=Adam,
+  loss=MSELoss, batch_size=128, confirming hyperparameters the log
+  only partially restates), `backend/notebooks/04b_ae_stability_check
+  .ipynb` (confirmed the deployed autoencoder.pt is the seed=7 run:
+  189 epochs, final val_loss 0.159707, AUC 0.5786 — the log names the
+  seed but not these per-run numbers), `backend/notebooks/08_clustering
+  .ipynb` (confirmed `KMeans(n_clusters=3, random_state=42, n_init=10)`
+  and `umap.UMAP(n_components=2, random_state=42)` — exact calls not
+  quoted in the log), `scripts/export_runtime_artifacts.py` +
+  direct `np.load` shape check (SHAP background confirmed `(100, 11)`,
+  `RandomState(42)`, legit-only cleaned-train rows), direct read of
+  `backend/data/features_hybrid.csv` (12,000 rows, 10,000/2,000 label
+  split, confirming Phase 1.1's 16.67%/83.33% figure at the feature-
+  table level too), `pyproject.toml` (cleanlab's exact optional-dependency
+  declaration), `backend/db/session.py` (confirmed SQLite is a plain
+  local file, `sqlite:///./argus.db`, no persistence claims to verify
+  since the app has never been hosted anywhere per `README.md`).
+- Threshold/validation-set methodology check (user-requested, answered
+  explicitly in the card): **no** separate validation set was used for
+  any hyperparameter sweep (IF grid, AE grid, ensemble-weight sweep,
+  Phase 2.2/2.3) or the threshold search (Phase 3.2) — all were
+  evaluated directly against the same untouched 2,400-row test set.
+  The only validation split anywhere is the autoencoder's internal
+  90/10 split of its own legit-only training rows, used solely for
+  early stopping, confirmed from `backend/notebooks/03_autoencoder.ipynb`.
+  Flagged in the card as a real methodological caveat (repeated test-set
+  evaluation across many experiments can optimistically bias the
+  reported numbers), not hidden.
+- One contradiction found between `README.md` and `docs/PROJECT_LOG.md`:
+  `README.md`'s "Honest results" cites ensemble AUC-ROC 0.6033 (Phase
+  2.3's figure, correctly cited), but Phase 3.2 re-measures the same
+  ensemble at 0.6035 after the sigmoid-normalization fix (monotonic
+  transform, difference noise-level) — the README doesn't mention this
+  later, trivially different, actually-running-code number. No other
+  numeric contradictions found.
+- Real avg-score spread recorded in the card (user-requested): 0.073
+  (0.584 − 0.511) across the three archetype clusters on analysis 18
+  (`real_sample_124.csv`, a real non-training-saturated upload),
+  sourced from Phase 4.2.4b rather than the training-data-saturated
+  `valid_5000.csv` analysis.
+- Status: Phase 5.1 complete. No code changes, no commits (per task
+  instruction).
