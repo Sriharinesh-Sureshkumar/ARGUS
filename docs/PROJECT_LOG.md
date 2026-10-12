@@ -2775,3 +2775,127 @@ existing history.*
   `valid_5000.csv` analysis.
 - Status: Phase 5.1 complete. No code changes, no commits (per task
   instruction).
+
+## Phase 5.2 — Backend tests + GitHub Actions CI
+
+- Step 0 audit (read-only, before writing anything): `backend/tests/`
+  had only `fixtures/test_8_players.csv`, no test files.
+  `backend/db/session.py` hardcodes `sqlite:///./argus.db` as a
+  module-level `engine`/`SessionLocal`; `main.py` and
+  `api/routes/health.py` each additionally do `from db.session import
+  engine` at module level, binding their own name to whatever object
+  `db.session.engine` was at *their* import time — patching
+  `db.session.engine` alone after those modules are already imported
+  would not affect them. `main.py`'s `lifespan()` calls
+  `Base.metadata.create_all(bind=engine)` then loads every real model
+  artifact (`load_models()`, `init_explainer()`,
+  `load_clustering_artifacts()`) plus a dummy scoring/clustering
+  warmup — all real, nothing mocked. Confirmed exact error codes used
+  across all 5 route files via grep (listed in this phase's chat
+  report, not repeated here).
+- `backend/tests/conftest.py` (new): session-scoped `_app` fixture
+  redirects `db.session.engine`/`SessionLocal` to a throwaway SQLite
+  file under `tmp_path_factory` *before* importing `main` (so
+  `main.py`'s own `from db.session import engine` binds to the
+  throwaway object, not the real one), then also directly reassigns
+  `main.engine` and `api.routes.health.engine` for the same reason,
+  before entering `TestClient(main_module.app)` as a context manager
+  (triggering `lifespan()` exactly once per test session — real model
+  artifacts loaded once, UMAP/Numba JIT warmup paid once, not once per
+  test). A function-scoped `test_db` fixture then gives each
+  individual test its own fresh, empty SQLite file (`tmp_path`),
+  calling `Base.metadata.create_all()` on it directly and overriding
+  the `get_db` FastAPI dependency via `app.dependency_overrides` — this
+  is the actual per-test isolation layer; the session-level engine
+  above only ever backs the one-time startup `create_all()` and the
+  `/health` connectivity probe. `db_session_factory` exposes the same
+  per-test `sessionmaker` so tests can query the DB directly (used by
+  the orphan-row check). No model, scoring, or SHAP code is mocked
+  anywhere in this fixture set.
+- Verified real-DB safety directly, not just by code reading: recorded
+  `sha256sum argus.db` before running the suite and again after —
+  **identical hash both times**, and `git status --short argus.db`
+  showed no change either. `backend/tests/test_db_isolation.py`
+  additionally asserts in-process that the active test engine's URL is
+  never the literal `sqlite:///./argus.db` string and never contains
+  `argus.db`.
+- `pytest>=9.1.1` and `httpx>=0.28.1` added via `uv add --dev pytest
+  httpx` (`[dependency-groups] dev` in `pyproject.toml`, PEP 735 —
+  `httpx` was already a transitive dependency via `jupyter`, so only
+  `pytest`/`iniconfig`/`pluggy` were newly installed). `uv.lock`
+  regenerated. `[tool.pytest.ini_options] testpaths = ["backend/tests"]`
+  added so `uv run pytest` from the repo root needs no extra path
+  argument. Confirmed `uv sync` (no `--extra train`) installs the dev
+  group but not `cleanlab` — exactly what the CI backend job needs.
+- 22 tests written across 7 files (`test_health.py`, `test_analyze.py`,
+  `test_history.py`, `test_player.py`, `test_clusters.py`,
+  `test_cors.py`, `test_db_isolation.py`), one behaviour each, covering:
+  `/health` 200; `/analyze` success (8 players, scores in [0,1], ranks
+  1..8 unique) and determinism (same file analyzed twice -> identical
+  `ensemble_score` per player_id); the 7 requested error paths
+  (`wrong_file_type`, `unreadable_csv` for an empty file,
+  `missing_columns`, `file_too_large`, `too_many_rows`,
+  `analysis_not_found` for both `/history/{id}` and `/player/{id}`,
+  `player_not_found`), each asserting status code, `code` string, and
+  a shared `assert_plain_language()` helper (no `[`/`]` list-repr
+  leakage, no "Path A"/"Path B"/".dem" jargon); `/history` list +
+  `/history/{id}` reload + delete-then-404 + a direct-DB-query check
+  that both `players` and `shap_values` rows for a deleted analysis are
+  gone (0 orphans, verified by row-id, not just row count); `/player`
+  SHAP response shape + a cache-hit test (second call returns
+  byte-identical `shap_values` and the DB still has exactly 11
+  `SHAPValue` rows, not 22); `/clusters` archetype
+  name/description/player_count plus every player's
+  `umap_x`/`umap_y`/`cluster_id`; CORS allow/deny per `Origin` header.
+- `file_too_large`/`too_many_rows` tests exploit the validation order
+  already documented in `analyze.py` (size check runs before CSV
+  parsing; row-count check runs before column validation) to use
+  minimal non-CSV-shaped payloads instead of building full valid
+  11-feature files — faster and simpler, same code path exercised.
+- **Full run**: `uv run pytest -q` -> **22 passed, 4 warnings, 29.62s**.
+  Warnings are pre-existing library noise (Starlette's `httpx` vs
+  `httpx2` TestClient deprecation notice, 3 shap/matplotlib
+  `PendingDeprecationWarning`s from `shap.plots.colors`) — not from
+  anything added this phase, not fixed (out of scope, app code
+  untouched). **No real application bug found** — every test passed
+  against the actual deployed code on the first run.
+- **Real mismatch found (reported, not silently patched): the task
+  description for this phase assumed `POST /analyze`'s response
+  includes `csv_filename` and a `created_at` field — it does not.**
+  `AnalysisResponse` (`backend/api/schemas.py`) only carries
+  `analysis_id`, `player_count`, `flagged_count`, `flag_threshold`,
+  `players`; `csv_filename`/`created_at` exist only on `HistoryItem`
+  (`GET /history`) and are not echoed back by `POST /analyze` or `GET
+  /history/{id}` (which reuses `AnalysisResponse`, not `HistoryItem`).
+  Tests were written against the real schema: `test_analyze.py` checks
+  the fields `AnalysisResponse` actually has, and
+  `test_history_lists_created_analysis` checks `csv_filename`/
+  `created_at` (ending in `Z`) on the `GET /history` list item instead,
+  where they really exist. This is a product-level gap worth a
+  follow-up decision (should `/analyze`'s response carry the filename
+  and timestamp it already has access to at creation time?), not
+  something this read-only-app-code phase should silently fix.
+- `.github/workflows/ci.yml` (new, 32 lines): triggers on push/PR to
+  `main` and `build`. `backend` job (ubuntu-latest, Python 3.11,
+  `astral-sh/setup-uv@v4` with `enable-cache: true`, `uv sync`, `uv run
+  pytest -q`) and `frontend` job (ubuntu-latest, Node 24 via
+  `actions/setup-node@v4` with npm caching, `npm ci`, `npm run lint`,
+  `npm run build`, `working-directory: frontend`). No secrets, no
+  deployment steps.
+- Verified locally: `cd frontend && npm run lint` (oxlint) — clean,
+  zero output. `npm run build` — succeeded, `built in 939ms`.
+- README: added a CI badge (top of file, `git remote -v` confirmed the
+  real repo URL,
+  `https://github.com/Sriharinesh-Sureshkumar/ARGUS`) and a new
+  "Tests" section (exact `uv run pytest` / `npm run lint` / `npm run
+  build` commands) between "API reference" and "Screenshots".
+- Files changed: `pyproject.toml`, `uv.lock`, `README.md`,
+  `docs/PROJECT_LOG.md` (this entry). Files added:
+  `.github/workflows/ci.yml`, `backend/tests/conftest.py`,
+  `backend/tests/test_{health,analyze,history,player,clusters,cors,
+  db_isolation}.py`. No commits (per task instruction).
+- Could not verify: GitHub Actions itself (the workflow file is
+  unpushed and uncommitted, so no live Actions run exists yet to
+  confirm against) and the CI badge image therefore currently has
+  nothing to render (it will populate once this workflow runs on
+  GitHub after a future commit/push).

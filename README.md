@@ -1,5 +1,7 @@
 # ARGUS
 
+[![CI](https://github.com/Sriharinesh-Sureshkumar/ARGUS/actions/workflows/ci.yml/badge.svg)](https://github.com/Sriharinesh-Sureshkumar/ARGUS/actions/workflows/ci.yml)
+
 **A**nomaly **R**ecognition and **G**ame **B**ehaviour **U**nderstanding **S**ystem — upload a CSV of per-player CS2 behaviour features and get back a ranked, explainable suspicion triage list, not a verdict.
 
 ![ARGUS results page](docs/screenshots/results.png)
@@ -185,6 +187,26 @@ All routes are under `/api/v1`.
 | DELETE | `/history/{analysis_id}` | Delete an analysis and its players/SHAP rows | 404 `analysis_not_found` |
 | GET | `/player/{player_id}?analysis_id=` | One player's scores + (lazily computed, cached) SHAP explanation | 404 `analysis_not_found`, 404 `player_not_found` |
 | GET | `/clusters?analysis_id=` | Per-archetype summaries + every player's UMAP point (defaults to the latest analysis if `analysis_id` is omitted) | 404 `no_analyses`, 404 `analysis_not_found` |
+
+## Tests
+
+Backend tests (`backend/tests/`) hit a real FastAPI `TestClient` against the real committed model artifacts — nothing is mocked — but every database read/write is redirected to a throwaway SQLite file under pytest's `tmp_path`; the real `backend/argus.db` is never opened.
+
+```bash
+uv sync
+uv run pytest
+```
+
+Frontend checks:
+
+```bash
+cd frontend
+npm ci
+npm run lint
+npm run build
+```
+
+Both suites run in CI on every push/PR to `main` and `build` (`.github/workflows/ci.yml`).
 
 ## Screenshots
 
