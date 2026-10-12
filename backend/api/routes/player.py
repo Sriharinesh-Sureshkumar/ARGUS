@@ -1,0 +1,82 @@
+"""ARGUS Phase 4.1 -- GET /api/v1/player/{player_id}
+
+Phase 4.1.5: SHAP is computed lazily here, on the first request for a
+given player, then cached in SHAPValue rows (see
+db.crud.get_or_compute_shap). Repeat requests for the same player are
+a cache hit -- just a DB read, no recomputation.
+"""
+
+import logging
+import time
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+
+from api.errors import api_error
+from api.schemas import PlayerDetailResponse, SHAPFeature
+from core.clustering import load_clustering_artifacts
+from db import crud
+from db.session import get_db
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+@router.get("/player/{player_id}", response_model=PlayerDetailResponse)
+def get_player(player_id: str, analysis_id: int = Query(...), db: Session = Depends(get_db)):
+    if not crud.analysis_exists(db, analysis_id):
+        raise api_error(
+            404,
+            "analysis_not_found",
+            f"Analysis {analysis_id} does not exist (it may have been deleted).",
+            "Open History to pick an analysis, or upload the CSV again.",
+        )
+
+    player = crud.get_player(db, analysis_id, player_id)
+    if player is None:
+        raise api_error(
+            404,
+            "player_not_found",
+            f"Player '{player_id}' is not in analysis {analysis_id}.",
+            "Go back to the results list for this analysis and pick a player from there.",
+        )
+
+    archetype_description = None
+    if player.cluster_id is not None:
+        artifacts = load_clustering_artifacts()
+        entry = artifacts["archetype_names"].get(str(player.cluster_id))
+        if entry:
+            archetype_description = entry.get("description")
+
+    start_time = time.time()
+    shap_rows, cache_hit = crud.get_or_compute_shap(db, player.id)
+    elapsed = time.time() - start_time
+    logger.debug(
+        "[player] player_id=%s analysis_id=%s: SHAP %s in %.2fs",
+        player_id,
+        analysis_id,
+        "cache hit" if cache_hit else "computed",
+        elapsed,
+    )
+
+    if not cache_hit:
+        db.refresh(player)  # pick up the top_shap_feature/top_shap_value backfill
+
+    shap_values = sorted(shap_rows, key=lambda s: s.feature_rank)
+
+    return PlayerDetailResponse(
+        player_id=player.player_id,
+        analysis_id=player.analysis_id,
+        rank=player.rank,
+        ensemble_score=player.ensemble_score,
+        if_score=player.if_score,
+        ae_score=player.ae_score,
+        is_flagged=player.is_flagged,
+        cluster_id=player.cluster_id,
+        archetype_name=player.archetype_name,
+        archetype_description=archetype_description,
+        shap_values=[SHAPFeature.model_validate(s) for s in shap_values],
+        umap_x=player.umap_x,
+        umap_y=player.umap_y,
+    )

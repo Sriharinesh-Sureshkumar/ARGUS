@@ -26,3 +26,6 @@ Thumbs.db
 
 # W&B local logs
 wandb/
+
+# Runtime SQLite database (Phase 4.1 FastAPI backend)
+argus.db

@@ -1,0 +1,66 @@
+/*
+  ARGUS design tokens -- the ONLY place colours and fonts are defined.
+
+  Tailwind v4 turns every variable in @theme into utility classes, e.g.
+  --color-surface -> bg-surface / text-surface / border-surface.
+  Components must use those class names, never raw hex values, so the
+  palette can be changed here in one place.
+
+  Source: docs/mockups/upload.png, player-detail.png, history.png,
+  clusters.png, results.png (pixel-sampled with PIL, see
+  docs/PROJECT_LOG.md Phase 4.2.0b / 4.2.0c for the full tables).
+*/
+
+@theme {
+  /* Drop Tailwind's built-in palette (red-500, gray-900, ...) so only
+     ARGUS tokens exist -- a stray "bg-gray-800" then simply doesn't work
+     instead of quietly drifting off-palette. */
+  --color-*: initial;
+
+  /* Backgrounds */
+  --color-base: #12110F;    /* page background */
+  --color-surface: #1A1914; /* cards, navbar, modal */
+
+  /* Accents -- muted chip-fill tones (pair with --color-content text) */
+  --color-accent-indigo: #353955; /* archetype chip: Precise Low-Volume Shooter */
+  --color-accent-amber: #533F1F;  /* archetype chip: High-Volume Erratic Shooter */
+  --color-accent-gray: #35363C;   /* archetype chip: Average Player */
+  --color-accent-red: #F2726C;    /* error state, delete action */
+
+  /* Cluster accents -- saturated tones for scatter/legend dots (clusters.png).
+     Scatter-plot dots render these at ~60% opacity over --color-base; the
+     legend/card dots use them at full opacity. */
+  --color-cluster-indigo: #7F8BF3;
+  --color-cluster-gray: #A3A09D;
+  --color-cluster-amber: #F0BF6E;
+
+  /* Neutrals */
+  --color-content: #F2F3F2;       /* main text */
+  --color-content-muted: #989794; /* secondary text, captions -- Phase 4.2.6:
+                                       lightness raised from #7E7C79 (same hue/
+                                       sat) so it clears 4.6:1 against the
+                                       worst real background it sits on
+                                       (row-highlight, 3.24:1 -> 4.61:1); see
+                                       docs/PROJECT_LOG.md for the full table */
+  --color-line: #312E28;          /* borders, dividers */
+  --color-dropzone-border: #3F3C35; /* dashed upload-dropzone / empty-state border */
+
+  /* Component-specific */
+  --color-primary-button: #F8E0BA; /* CTA button fill (Try again, Upload a CSV) */
+  --color-button-text: #000000;    /* text on primary-button / podium badge */
+  --color-bar-fill: #F1D6A7;       /* suspicion-score bar / progress bar fill */
+  --color-bar-track: #33302A;      /* suspicion-score bar / progress bar track */
+  --color-tooltip-bg: #302E29;     /* small tag/tooltip chips, e.g. "engagement 29 - 0.83 s" */
+  --color-podium: #F5C973;         /* #1 leaderboard card border (results.png; not in the
+                                       upload/player-detail/history source set -- see log) */
+  --color-nav-active: #EBD8B2;     /* active nav-tab underline + active tab text */
+  --color-link: #A1B5E2;           /* "Open ->" row links */
+  --color-row-highlight: #342E21;  /* table row hover / highlighted row background */
+  --color-pagination-active-border: #BC9A65; /* current-page pagination button border */
+  --color-table-header: #211F1C;   /* results table header row background (results.png) */
+
+  /* Fonts: Inter for UI text, JetBrains Mono for numbers/scores/ids.
+     The font files are self-hosted via @fontsource (imported in main.jsx). */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
