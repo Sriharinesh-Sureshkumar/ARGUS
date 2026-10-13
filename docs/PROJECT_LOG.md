@@ -3160,3 +3160,140 @@ existing history.*
   timing beyond the stated ~15-30s; Cloud Run's real container image
   size (Phase 5.3's clean-venv proxy, ~1.01 GB, is the only
   measurement available from either phase).
+
+## Phase 5.5 -- README rewrite into a detailed, well-structured write-up
+
+- Full rewrite of `README.md` (465 lines) into the requested 12-part
+  structure: Overview, Screenshots, How it works (5 subsections with
+  diagrams), Tools and why each was chosen, Key design decisions,
+  Results and honest evaluation, Problems faced and how they were
+  solved, Work log, What I learned, How this was built, Limitations
+  and future work, Project reference (repository layout, run locally,
+  tests and CI, deployment, project docs index). A clickable table of
+  contents links every section and subsection.
+- Sources read in full before writing anything: `docs/PROJECT_LOG.md`
+  (all ~3160 lines, every phase from Phase 0 through 5.4),
+  `docs/MODEL_CARD.md`, `docs/DEPLOYMENT.md`, the prior `README.md`,
+  `pyproject.toml`, `frontend/package.json`, `.github/workflows/ci.yml`,
+  `backend/db/models.py` (for the ER diagram's exact columns),
+  `backend/core/config.py` (upload limits), and a repo-wide file
+  listing (`backend/api`, `backend/core`, `backend/db`,
+  `frontend/src`) to confirm the repository-layout tree and every
+  "Run locally" command still match what's actually in the repo. No
+  LICENSE file exists, so the structure's optional license line was
+  omitted entirely rather than guessed.
+- **7 Mermaid diagrams**, all validated outside the repo before being
+  committed to the README: written to scratch `.mmd` files in this
+  session's OS-temp scratchpad (never inside the repo) and each run
+  through `npx -y @mermaid-js/mermaid-cli` (ephemeral, nothing added
+  to any `package.json`), producing a non-empty `.svg` for every one
+  with no error output -- confirming valid syntax for all 7 before
+  they were pasted into `README.md`:
+  1. System architecture (flowchart) -- browser/Vercel -> FastAPI/
+     Cloud Run -> IF/AE/SHAP/K-Means+UMAP -> SQLite.
+  2. Data and feature pipeline (flowchart) -- Kaggle telemetry -> 11
+     hybrid features -> stratified split -> cleanlab cleaning (train
+     only) + scaler -> legit-only novelty-fit subset.
+  3. Training and scoring (flowchart) -- IF + AE -> fixed-reference
+     sigmoid normalisation -> weighted ensemble -> score/rank; AE
+     latent space -> K-Means + UMAP.
+  4. Request flow (sequenceDiagram) -- upload -> analyze -> store ->
+     results; later player-detail open -> lazy SHAP -> cache, with
+     the cache-hit/cache-miss `alt` block.
+  5. Database (erDiagram) -- `analyses` -> `players` -> `shap_values`,
+     with the cascade relationship stated in the prose below the
+     diagram (erDiagram syntax itself has no cascade annotation).
+  6. Triage-reframing decision (flowchart, under Key design decision
+     5) -- binary flag's poor precision -> high-precision alternative's
+     poor recall -> neither safe -> reframed as ranked triage.
+  7. Work-log timeline (`timeline` diagram) -- five entries keyed to
+     actual recorded phase numbers (Phase 0/1 through Phase 5), not
+     invented calendar weeks -- the log records phase numbers, not a
+     per-phase calendar date, so the timeline axis uses what's
+     actually there.
+  All special characters in node/participant labels (slashes, periods,
+  plus signs, parentheses) were either quoted inside `["..."]` node
+  labels or avoided entirely in the sequence diagram's participant
+  aliases (spelled out as plain words, e.g. "Analyze Endpoint" instead
+  of a literal path with a slash) specifically so the mermaid-cli
+  validation pass would catch any real syntax problem rather than
+  something papered over by guessing at safe-looking syntax.
+- **Tools table** (Python/uv, PyTorch, scikit-learn, cleanlab, SHAP,
+  UMAP, FastAPI, SQLAlchemy+SQLite, Pydantic, React/Vite/Tailwind,
+  axios, pytest, GitHub Actions, Docker, Cloud Run, Vercel): every
+  "why" cited to a specific phase where the log recorded an actual
+  reason (SQLite vs. Supabase and React vs. Streamlit from Phase 0;
+  axios's `onUploadProgress` from Phase 4.2.1; cleanlab's +0.017 AUC
+  finding from Phase 1.6.5; Cloud Run's "Hugging Face Docker Spaces
+  require a paid plan" reason from Phase 5.4). Where no
+  alternative-vs-alternative comparison exists in the log (FastAPI,
+  SQLAlchemy, Pydantic, UMAP, SHAP, PyTorch, scikit-learn, GitHub
+  Actions, Vercel, Docker's non-HF role), the table says so in neutral
+  factual terms instead of inventing a rationale.
+- **Problems-faced table**: all 12 items the task listed are present,
+  each sourced to its own phase (CS2CD unlabelled -- Phase 0; cleanlab
+  leakage 0.8820 -> 0.6745 -- Phase 1.6/1.6.5; autoencoder lucky seed
+  -- Phase 2.3; score saturation hard-clip -> sigmoid -- Phase 3.2;
+  UMAP cold-start misdiagnosis 6.5s/6.68s total -> 0.058s -- Phase
+  4.1.5/4.1.6/4.1.7; SHAP thread-safety/duplicate rows -- Phase 4.2.3;
+  engagement-level detection near-random -- Phase 1.4/1.4.5;
+  clean-clone failures (cleanlab import + missing split files) --
+  Phase 4.3/4.3b; hardcoded CORS -- Phase 4.5/4.5b; accessibility
+  contrast violations -- Phase 4.2.6; Cloud Build IAM failure --
+  Phase 5.4; Hugging Face Docker Spaces requiring a paid plan -- Phase
+  5.4).
+- **Results and honest evaluation** links to `docs/MODEL_CARD.md`
+  rather than duplicating its full detail; the README itself states
+  only the headline AUC numbers (ensemble 0.6033/0.6035, supervised
+  reference ceiling 0.6745, individual IF/AE 0.5941/0.5786), the
+  two-row threshold table (0.50 and 0.8275), the no-separate-
+  validation-set caveat, the 0.073 cluster-separation spread, and the
+  SHAP `min_cv_pitch` dominance + ablation finding -- all copied
+  verbatim from `docs/MODEL_CARD.md`/`docs/PROJECT_LOG.md`, nothing
+  rounded or invented.
+- **Omitted, not invented** (facts the task's structure could have
+  invited but aren't recorded anywhere in the repo): the source
+  Kaggle dataset's exact name/URL/licence; CS2CD's licence terms;
+  umap-learn's exact `n_neighbors`/`min_dist` defaults; a dedicated
+  training-pipeline script/diagram (the pipeline is narrated
+  phase-by-phase in the log, not captured as one artifact, so no "data
+  pipeline script" claim was made -- the Mermaid data-pipeline diagram
+  is a diagram of what the log describes, not a claim that a single
+  runnable script exists); any real-world GitHub Actions run result
+  (the workflow has never actually run against a push, per Phase
+  5.2's own "could not verify"); a license line (no `LICENSE` file
+  exists in the repo).
+- **No contradictions found** between the new `README.md` and
+  `docs/PROJECT_LOG.md`/`docs/MODEL_CARD.md` -- every number in the
+  new README (AUCs, thresholds, cluster spread, SHAP dominance ratios,
+  upload limits, version pins) was copied directly from one of the
+  three source documents or from `pyproject.toml`/`frontend/
+  package.json`, not retyped from memory.
+- **Link/path verification**: every relative link and image path in
+  the new README (`docs/DEPLOYMENT.md`, `docs/MODEL_CARD.md`,
+  `docs/PROJECT_LOG.md`, all 8 `docs/screenshots/*.png` files,
+  `sample_data/demo_players.csv`) confirmed to exist on disk with a
+  direct filesystem check. Every TOC anchor cross-checked by hand
+  against GitHub's slugification rule (lowercase, strip punctuation,
+  spaces to hyphens) against the actual heading text -- all resolve.
+  The `uv run uvicorn main:app --reload --app-dir backend` command in
+  "Run locally" re-checked against `backend/main.py`'s own docstring
+  (byte-for-byte match); `npm run lint`/`npm run build` re-checked
+  against `frontend/package.json`'s `scripts` block.
+- Full local re-verification after the rewrite: `uv run pytest -q` ->
+  **24 passed**, 31.47s (same warnings as every prior phase this
+  session: `httpx`/`starlette.testclient` deprecation notice, 3 shap
+  `PendingDeprecationWarning`s). `cd frontend && npm run lint`
+  (oxlint) -- clean. `npm run build` -- succeeded (`built in 342ms`).
+  `sha256sum argus.db` identical before and after this phase
+  (`3bf53969f6cfe79a78b2d0e876d191448e54956a17bad8f5d59df79e7a215076`);
+  `git status --short argus.db` empty throughout. No application code
+  was touched this phase -- only `README.md` and this log entry.
+- Files changed: `README.md` (full rewrite, 465 lines, up from the
+  prior 261-line version), `docs/PROJECT_LOG.md` (this entry). No
+  other files touched; no commits.
+- Could not verify: an actual rendered view of the Mermaid diagrams on
+  github.com itself (mermaid-cli's successful parse/SVG-render is the
+  closest available proxy to GitHub's own Mermaid renderer, but isn't
+  byte-identical to it); whether GitHub's specific Mermaid version has
+  any further syntax restriction beyond what mermaid-cli enforces.
