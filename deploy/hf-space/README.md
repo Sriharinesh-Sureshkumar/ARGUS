@@ -1,0 +1,30 @@
+---
+title: ARGUS
+emoji: 🎯
+colorFrom: gray
+colorTo: yellow
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
+<!--
+  This folder was built for a Hugging Face Space (Docker SDK), but
+  Docker Spaces turned out to require a paid Hugging Face plan, so HF
+  was not used for the live deployment. This folder, its Dockerfile,
+  and scripts/build_space.py are kept as-is and reused unchanged to
+  build the real backend on Google Cloud Run -- see
+  docs/DEPLOYMENT.md. The YAML front matter above is inert outside of
+  an actual HF Space; it is harmless if this file is staged alongside
+  the Cloud Run build.
+-->
+
+# ARGUS (backend API)
+
+This Space runs the ARGUS backend API only: a demo of a CS2 player
+anomaly-triage ranking tool, not a verdict on any player. Set
+`CORS_ORIGINS` (Space secret/variable) to your frontend's real URL
+before using it from a browser -- never `*`. History is stored in
+this Space's own ephemeral filesystem, so **uploaded analyses are
+wiped whenever the Space restarts or redeploys**; nothing here is a
+permanent record.

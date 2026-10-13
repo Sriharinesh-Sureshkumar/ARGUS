@@ -1,0 +1,37 @@
+# ARGUS Space -- runtime dependencies only.
+#
+# Deliberately NOT installed via `uv sync` against the main project's
+# pyproject.toml/uv.lock: that lockfile's top-level `dependencies` also
+# includes jupyter, matplotlib and seaborn (notebook-only tooling,
+# never imported by backend/main.py, core/, api/, or db/ -- confirmed
+# by grep), and excluding them via `uv sync --no-install-package`
+# still pulls in their full transitive dependency tree (notebook,
+# jupyterlab, ipykernel, pyzmq, tornado, ... -- confirmed empirically
+# while building this Space, see docs/PROJECT_LOG.md Phase 5.3) since
+# that flag only skips the named packages, not their now-unneeded
+# dependencies. This file is the actual runtime import graph instead;
+# version floors are kept in sync with pyproject.toml's `dependencies`.
+# torch/torchvision are intentionally absent here -- installed
+# separately from the PyTorch CPU wheel index in the Dockerfile,
+# instead of the cu130 (CUDA) index pinned for local GPU dev.
+#
+# scikit-learn is pinned EXACTLY (not >=), unlike the others: the
+# committed trained_models/*.pkl (IsolationForest, StandardScaler,
+# KMeans) were pickled under scikit-learn==1.9.0 (uv.lock). A floor-only
+# `>=1.9.0` resolved to 1.9.1 during Phase 5.3 verification and raised
+# sklearn's own InconsistentVersionWarning ("might lead to breaking
+# code or invalid results") on every model load at startup. Scores were
+# verified byte-identical against the pinned-1.9.0 dev environment for
+# this specific pair of versions, but the warning is sklearn's explicit
+# guidance not to rely on that holding across releases, so this pin
+# removes the risk instead of re-verifying it on every scikit-learn
+# bump.
+fastapi>=0.141.1
+numpy>=2.4.6
+pandas>=3.0.3
+python-multipart>=0.0.32
+scikit-learn==1.9.0
+shap>=0.51.0
+sqlalchemy>=2.0.54
+umap-learn>=0.5.12
+uvicorn[standard]>=0.53.0

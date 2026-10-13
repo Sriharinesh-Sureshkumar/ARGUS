@@ -2713,3 +2713,450 @@ existing history.*
   analysis 22 remains in the real history.
 - No commits. Files changed: `backend/main.py`, `backend/.env.example`,
   `README.md`, `docs/PROJECT_LOG.md` (this entry).
+
+## Phase 5.1 — Model card
+
+- `docs/MODEL_CARD.md` written (new file): model overview, training
+  data, architecture/hyperparameters, evaluation, known limitations,
+  ethical/misuse considerations, reproduction steps, and an explicit
+  "Not recorded in the repo" section. Every fact cited to a file in
+  this repo; nothing invented or rounded.
+- Sourced beyond `README.md`/`docs/PROJECT_LOG.md` by reading code and
+  artifacts directly: `backend/core/model.py` (Isolation Forest/
+  autoencoder architecture — found the production `isolation_forest.pkl`
+  was retrained with `n_estimators=300, max_features=0.5` per Phase
+  2.2, but `model.py`'s own `train_isolation_forest()` is a stale
+  script still hardcoding `n_estimators=200` — flagged explicitly in
+  the card rather than silently using the script's value),
+  `backend/core/inference.py`/`explainer.py`/`clustering.py` (sigmoid
+  normalization formula, SHAP background construction, K-Means/UMAP
+  pipeline), `backend/trained_models/scoring_config.json`/
+  `autoencoder_config.json`/`archetype_names.json` (exact normalization
+  constants, ensemble weight, threshold stats, per-cluster cheater
+  rates), `backend/notebooks/03_autoencoder.ipynb` (optimizer=Adam,
+  loss=MSELoss, batch_size=128, confirming hyperparameters the log
+  only partially restates), `backend/notebooks/04b_ae_stability_check
+  .ipynb` (confirmed the deployed autoencoder.pt is the seed=7 run:
+  189 epochs, final val_loss 0.159707, AUC 0.5786 — the log names the
+  seed but not these per-run numbers), `backend/notebooks/08_clustering
+  .ipynb` (confirmed `KMeans(n_clusters=3, random_state=42, n_init=10)`
+  and `umap.UMAP(n_components=2, random_state=42)` — exact calls not
+  quoted in the log), `scripts/export_runtime_artifacts.py` +
+  direct `np.load` shape check (SHAP background confirmed `(100, 11)`,
+  `RandomState(42)`, legit-only cleaned-train rows), direct read of
+  `backend/data/features_hybrid.csv` (12,000 rows, 10,000/2,000 label
+  split, confirming Phase 1.1's 16.67%/83.33% figure at the feature-
+  table level too), `pyproject.toml` (cleanlab's exact optional-dependency
+  declaration), `backend/db/session.py` (confirmed SQLite is a plain
+  local file, `sqlite:///./argus.db`, no persistence claims to verify
+  since the app has never been hosted anywhere per `README.md`).
+- Threshold/validation-set methodology check (user-requested, answered
+  explicitly in the card): **no** separate validation set was used for
+  any hyperparameter sweep (IF grid, AE grid, ensemble-weight sweep,
+  Phase 2.2/2.3) or the threshold search (Phase 3.2) — all were
+  evaluated directly against the same untouched 2,400-row test set.
+  The only validation split anywhere is the autoencoder's internal
+  90/10 split of its own legit-only training rows, used solely for
+  early stopping, confirmed from `backend/notebooks/03_autoencoder.ipynb`.
+  Flagged in the card as a real methodological caveat (repeated test-set
+  evaluation across many experiments can optimistically bias the
+  reported numbers), not hidden.
+- One contradiction found between `README.md` and `docs/PROJECT_LOG.md`:
+  `README.md`'s "Honest results" cites ensemble AUC-ROC 0.6033 (Phase
+  2.3's figure, correctly cited), but Phase 3.2 re-measures the same
+  ensemble at 0.6035 after the sigmoid-normalization fix (monotonic
+  transform, difference noise-level) — the README doesn't mention this
+  later, trivially different, actually-running-code number. No other
+  numeric contradictions found.
+- Real avg-score spread recorded in the card (user-requested): 0.073
+  (0.584 − 0.511) across the three archetype clusters on analysis 18
+  (`real_sample_124.csv`, a real non-training-saturated upload),
+  sourced from Phase 4.2.4b rather than the training-data-saturated
+  `valid_5000.csv` analysis.
+- Status: Phase 5.1 complete. No code changes, no commits (per task
+  instruction).
+
+## Phase 5.2 — Backend tests + GitHub Actions CI
+
+- Step 0 audit (read-only, before writing anything): `backend/tests/`
+  had only `fixtures/test_8_players.csv`, no test files.
+  `backend/db/session.py` hardcodes `sqlite:///./argus.db` as a
+  module-level `engine`/`SessionLocal`; `main.py` and
+  `api/routes/health.py` each additionally do `from db.session import
+  engine` at module level, binding their own name to whatever object
+  `db.session.engine` was at *their* import time — patching
+  `db.session.engine` alone after those modules are already imported
+  would not affect them. `main.py`'s `lifespan()` calls
+  `Base.metadata.create_all(bind=engine)` then loads every real model
+  artifact (`load_models()`, `init_explainer()`,
+  `load_clustering_artifacts()`) plus a dummy scoring/clustering
+  warmup — all real, nothing mocked. Confirmed exact error codes used
+  across all 5 route files via grep (listed in this phase's chat
+  report, not repeated here).
+- `backend/tests/conftest.py` (new): session-scoped `_app` fixture
+  redirects `db.session.engine`/`SessionLocal` to a throwaway SQLite
+  file under `tmp_path_factory` *before* importing `main` (so
+  `main.py`'s own `from db.session import engine` binds to the
+  throwaway object, not the real one), then also directly reassigns
+  `main.engine` and `api.routes.health.engine` for the same reason,
+  before entering `TestClient(main_module.app)` as a context manager
+  (triggering `lifespan()` exactly once per test session — real model
+  artifacts loaded once, UMAP/Numba JIT warmup paid once, not once per
+  test). A function-scoped `test_db` fixture then gives each
+  individual test its own fresh, empty SQLite file (`tmp_path`),
+  calling `Base.metadata.create_all()` on it directly and overriding
+  the `get_db` FastAPI dependency via `app.dependency_overrides` — this
+  is the actual per-test isolation layer; the session-level engine
+  above only ever backs the one-time startup `create_all()` and the
+  `/health` connectivity probe. `db_session_factory` exposes the same
+  per-test `sessionmaker` so tests can query the DB directly (used by
+  the orphan-row check). No model, scoring, or SHAP code is mocked
+  anywhere in this fixture set.
+- Verified real-DB safety directly, not just by code reading: recorded
+  `sha256sum argus.db` before running the suite and again after —
+  **identical hash both times**, and `git status --short argus.db`
+  showed no change either. `backend/tests/test_db_isolation.py`
+  additionally asserts in-process that the active test engine's URL is
+  never the literal `sqlite:///./argus.db` string and never contains
+  `argus.db`.
+- `pytest>=9.1.1` and `httpx>=0.28.1` added via `uv add --dev pytest
+  httpx` (`[dependency-groups] dev` in `pyproject.toml`, PEP 735 —
+  `httpx` was already a transitive dependency via `jupyter`, so only
+  `pytest`/`iniconfig`/`pluggy` were newly installed). `uv.lock`
+  regenerated. `[tool.pytest.ini_options] testpaths = ["backend/tests"]`
+  added so `uv run pytest` from the repo root needs no extra path
+  argument. Confirmed `uv sync` (no `--extra train`) installs the dev
+  group but not `cleanlab` — exactly what the CI backend job needs.
+- 22 tests written across 7 files (`test_health.py`, `test_analyze.py`,
+  `test_history.py`, `test_player.py`, `test_clusters.py`,
+  `test_cors.py`, `test_db_isolation.py`), one behaviour each, covering:
+  `/health` 200; `/analyze` success (8 players, scores in [0,1], ranks
+  1..8 unique) and determinism (same file analyzed twice -> identical
+  `ensemble_score` per player_id); the 7 requested error paths
+  (`wrong_file_type`, `unreadable_csv` for an empty file,
+  `missing_columns`, `file_too_large`, `too_many_rows`,
+  `analysis_not_found` for both `/history/{id}` and `/player/{id}`,
+  `player_not_found`), each asserting status code, `code` string, and
+  a shared `assert_plain_language()` helper (no `[`/`]` list-repr
+  leakage, no "Path A"/"Path B"/".dem" jargon); `/history` list +
+  `/history/{id}` reload + delete-then-404 + a direct-DB-query check
+  that both `players` and `shap_values` rows for a deleted analysis are
+  gone (0 orphans, verified by row-id, not just row count); `/player`
+  SHAP response shape + a cache-hit test (second call returns
+  byte-identical `shap_values` and the DB still has exactly 11
+  `SHAPValue` rows, not 22); `/clusters` archetype
+  name/description/player_count plus every player's
+  `umap_x`/`umap_y`/`cluster_id`; CORS allow/deny per `Origin` header.
+- `file_too_large`/`too_many_rows` tests exploit the validation order
+  already documented in `analyze.py` (size check runs before CSV
+  parsing; row-count check runs before column validation) to use
+  minimal non-CSV-shaped payloads instead of building full valid
+  11-feature files — faster and simpler, same code path exercised.
+- **Full run**: `uv run pytest -q` -> **22 passed, 4 warnings, 29.62s**.
+  Warnings are pre-existing library noise (Starlette's `httpx` vs
+  `httpx2` TestClient deprecation notice, 3 shap/matplotlib
+  `PendingDeprecationWarning`s from `shap.plots.colors`) — not from
+  anything added this phase, not fixed (out of scope, app code
+  untouched). **No real application bug found** — every test passed
+  against the actual deployed code on the first run.
+- **Real mismatch found (reported, not silently patched): the task
+  description for this phase assumed `POST /analyze`'s response
+  includes `csv_filename` and a `created_at` field — it does not.**
+  `AnalysisResponse` (`backend/api/schemas.py`) only carries
+  `analysis_id`, `player_count`, `flagged_count`, `flag_threshold`,
+  `players`; `csv_filename`/`created_at` exist only on `HistoryItem`
+  (`GET /history`) and are not echoed back by `POST /analyze` or `GET
+  /history/{id}` (which reuses `AnalysisResponse`, not `HistoryItem`).
+  Tests were written against the real schema: `test_analyze.py` checks
+  the fields `AnalysisResponse` actually has, and
+  `test_history_lists_created_analysis` checks `csv_filename`/
+  `created_at` (ending in `Z`) on the `GET /history` list item instead,
+  where they really exist. This is a product-level gap worth a
+  follow-up decision (should `/analyze`'s response carry the filename
+  and timestamp it already has access to at creation time?), not
+  something this read-only-app-code phase should silently fix.
+- `.github/workflows/ci.yml` (new, 32 lines): triggers on push/PR to
+  `main` and `build`. `backend` job (ubuntu-latest, Python 3.11,
+  `astral-sh/setup-uv@v4` with `enable-cache: true`, `uv sync`, `uv run
+  pytest -q`) and `frontend` job (ubuntu-latest, Node 24 via
+  `actions/setup-node@v4` with npm caching, `npm ci`, `npm run lint`,
+  `npm run build`, `working-directory: frontend`). No secrets, no
+  deployment steps.
+- Verified locally: `cd frontend && npm run lint` (oxlint) — clean,
+  zero output. `npm run build` — succeeded, `built in 939ms`.
+- README: added a CI badge (top of file, `git remote -v` confirmed the
+  real repo URL,
+  `https://github.com/Sriharinesh-Sureshkumar/ARGUS`) and a new
+  "Tests" section (exact `uv run pytest` / `npm run lint` / `npm run
+  build` commands) between "API reference" and "Screenshots".
+- Files changed: `pyproject.toml`, `uv.lock`, `README.md`,
+  `docs/PROJECT_LOG.md` (this entry). Files added:
+  `.github/workflows/ci.yml`, `backend/tests/conftest.py`,
+  `backend/tests/test_{health,analyze,history,player,clusters,cors,
+  db_isolation}.py`. No commits (per task instruction).
+- Could not verify: GitHub Actions itself (the workflow file is
+  unpushed and uncommitted, so no live Actions run exists yet to
+  confirm against) and the CI badge image therefore currently has
+  nothing to render (it will populate once this workflow runs on
+  GitHub after a future commit/push).
+
+## Phase 5.3 — Deployment files (Hugging Face Space + Vercel), not deployed
+
+- **ARGUS is NOT deployed anywhere by this phase.** Every file below is
+  prepared for a human to deploy manually later (see
+  `docs/DEPLOYMENT.md`); nothing here logs in, pushes to, or creates
+  anything on Hugging Face or Vercel.
+- Step 0 audit (read-only, before writing anything): `backend/trained_models/`
+  totals 9.0 MB across 9 files, largest `umap_model.pkl` (6.03 MB) --
+  nothing over 10 MB, so git-lfs is not needed for this Space.
+  `backend/db/session.py` hardcoded `sqlite:///./argus.db` with no env
+  override. `pyproject.toml`'s `[tool.uv.sources]` pins torch/
+  torchvision to the `pytorch-cu130` (CUDA) index for local GPU dev --
+  a free CPU Space needs the PyTorch CPU wheel index instead. `docker
+  --version` -> not found on this machine, so Step 3 verification used
+  a clean temporary venv instead of an actual container build/run.
+  Frontend: `VITE_API_BASE_URL` (build-time, `import.meta.env`) already
+  documented in `frontend/.env.example`; router is `react-router-dom`'s
+  `BrowserRouter` (real History API), which needs Vercel's SPA rewrite
+  for deep-linked routes to work.
+- `backend/db/session.py`: added `ARGUS_DB_PATH` env var (default
+  `./argus.db`, unchanged when unset) -- `SQLALCHEMY_DATABASE_URL` is
+  now built from it. `backend/tests/test_db_path_config.py` (new, 2
+  tests) verifies this in a **fresh subprocess** rather than by
+  reloading `db.session` in-process -- reloading would recreate its
+  module-level `engine`/`SessionLocal` against whatever path is active
+  at reload time and could silently repoint every other test in the
+  suite (which depends on `conftest.py`'s own patched engine) at a
+  stray file. `backend/.env.example` documents the new var.
+- `deploy/hf-space/`:
+  - `Dockerfile`: `python:3.11-slim`, non-root `argus` user (uid 1000),
+    listens on port 7860, `CMD uvicorn main:app --host 0.0.0.0 --port
+    7860 --app-dir backend`. Installs from `requirements.txt` (next
+    bullet) rather than `uv sync` against the staged `pyproject.toml`/
+    `uv.lock`, for two reasons confirmed by actually running each path
+    during this phase: (1) the lockfile's cu130 torch/torchvision pin,
+    worked around here with a separate `uv pip install
+    --extra-index-url https://download.pytorch.org/whl/cpu torch
+    torchvision`; (2) `uv sync --no-install-package jupyter
+    --no-install-package matplotlib --no-install-package seaborn`
+    (notebook-only packages, confirmed never imported by
+    `backend/main.py`/`core/`/`api/`/`db/` via grep) still pulled in
+    their full transitive tree (jupyterlab, notebook, ipykernel, pyzmq,
+    tornado, ...) -- 177 packages installed in a test run, vs 40 with
+    a hand-written runtime-only `requirements.txt`. `pyproject.toml`/
+    `uv.lock` are still staged for provenance (they describe the real
+    project) but are not what builds this image.
+    `ARGUS_DB_PATH=/data/argus.db`, `CORS_ORIGINS=""` (falls back to
+    `main.py`'s safe localhost default, never `*`, until the Space
+    operator sets a real value) set as image defaults; `/data` and
+    `/app` chowned to the non-root user.
+  - `requirements.txt`: the actual runtime import graph (fastapi,
+    numpy, pandas, python-multipart, scikit-learn, shap, sqlalchemy,
+    umap-learn, uvicorn) -- torch/torchvision deliberately absent
+    (installed separately, CPU wheels). `scikit-learn` is pinned
+    **exactly** to `==1.9.0` (not `>=`), unlike every other entry: a
+    floor-only `>=1.9.0` resolved to `1.9.1` during Step 3's clean-venv
+    verification and raised sklearn's own
+    `InconsistentVersionWarning` ("might lead to breaking code or
+    invalid results") on every one of the 4 committed `.pkl` model
+    loads at startup (IsolationForest, StandardScaler x2, KMeans) --
+    `uv.lock` confirms the real artifacts were pickled under exactly
+    `1.9.0`. Scores for the 8-player fixture were verified
+    byte-identical between the 1.9.0 (dev) and 1.9.1 (drifted) runs for
+    this specific pair of versions, but sklearn's own warning is
+    explicit guidance not to rely on that holding across releases, so
+    the pin removes the risk rather than re-verifying it on every
+    scikit-learn bump.
+  - `README.md`: Space card YAML front matter (`title: ARGUS`,
+    `sdk: docker`, `app_port: 7860`) plus a short description stating
+    plainly: this is a demo, a ranking tool not a verdict, and history
+    is ephemeral.
+- `scripts/build_space.py` (new): stages backend code + `trained_models`
+  (excluding `data/`, `notebooks/`, `tests/`, `__pycache__`),
+  `sample_data/`, `pyproject.toml`, `uv.lock`, `requirements.txt`, the
+  Dockerfile and Space README into `build/space/` (already covered by
+  the repo's existing blanket `build/` gitignore rule -- no new
+  gitignore entry needed). No `argus.db`, no dev files. Run output:
+  **33 files, 9.63 MB total, 0 files over 10 MB.**
+- CORS: documented (both in the Dockerfile's comments and
+  `docs/DEPLOYMENT.md`) that the Space operator must set `CORS_ORIGINS`
+  to the real Vercel URL via the Space's Settings -> Variables --
+  never `*`. Reuses the existing `_cors_origins()` mechanism from Phase
+  4.5b unchanged.
+- `frontend/vercel.json` (new): SPA rewrite (`/(.*)` -> `/index.html`)
+  -- required because the app uses `react-router-dom`'s `BrowserRouter`
+  (confirmed via `frontend/src/main.jsx`), which needs server-side
+  fallback for deep-linked/refreshed routes like `/results/3`.
+  `frontend/.env.example`: documented that `VITE_API_BASE_URL` is a
+  **build-time** value (Vite inlines `import.meta.env.*` into the
+  bundle), not read at runtime, so changing it on Vercel requires a
+  rebuild via the dashboard, not just a restart.
+- Verified the build-time claim directly, not just by reading Vite's
+  docs: `VITE_API_BASE_URL="https://dummy-argus-check.example.com/api/v1"
+  npm run build` then `grep -rl dummy-argus-check.example.com dist/` --
+  found inside `dist/assets/index-*.js`. Rebuilt immediately after with
+  no env var override to restore the normal default in the (gitignored,
+  never committed) local `dist/`.
+- Step 3 verification (Docker unavailable on this machine, confirmed by
+  `docker --version` -> command not found): staged `build/space/` was
+  copied into an isolated scratch directory (outside the repo, so the
+  running app could not accidentally fall back to any other repo file)
+  and run from a **fresh temporary venv** instead of a container:
+  - `uv venv .venv` (Python 3.11.15) +
+    `uv pip install --python .venv/Scripts/python.exe -r requirements.txt`
+    -- 40 packages installed (vs the 177-package `uv sync` path
+    rejected above).
+  - `uv pip install --python .venv/Scripts/python.exe
+    --extra-index-url https://download.pytorch.org/whl/cpu torch
+    torchvision` -- confirmed `torch==2.14.1+cpu`/
+    `torchvision==0.29.1+cpu` installed (the `+cpu` build tag confirms
+    no CUDA wheel was pulled).
+  - Started `uvicorn main:app --host 127.0.0.1 --port 7861 --app-dir
+    backend` from the isolated copy only, with `ARGUS_DB_PATH` pointed
+    at a throwaway file outside the repo -- never `backend/argus.db`.
+    Startup log: `[startup] scoring + clustering warmup took 11.81s`
+    (consistent with the UMAP/Numba JIT cost documented in Phase
+    4.1.7), then `Application startup complete.`
+  - `GET /api/v1/health` -> 200,
+    `{"status":"ok","models_loaded":true,"db_connected":true,...}`.
+  - `POST /api/v1/analyze` with `backend/tests/fixtures/test_8_players.csv`
+    -> 200, 8 players scored/ranked/clustered, 4 flagged at the 0.5
+    threshold -- `ensemble_score` values verified identical (to 6
+    decimal places) against the same fixture scored directly via
+    `core.inference.score_players()` in the main dev environment (the
+    `scikit-learn==1.9.0` pin above was applied after this comparison,
+    based on the warning it surfaced, not because the scores
+    themselves were wrong here).
+  - Warm request latency (3 runs each, `curl -w %{time_total}`):
+    `GET /health` ~4.4-5.2ms; `POST /analyze` (8 players) ~64-69ms --
+    consistent with Phase 4.1.7's post-warmup steady state.
+  - Venv size (proxy for image weight, not a real Docker image --
+    no base-image layering/compression to compare against): 990 MB
+    (`.venv`) + 9.6 MB (staged code/artifacts) = **1.01 GB total**,
+    dominated by torch's CPU wheel (torch alone downloaded as 118.2 MB
+    compressed). A real Docker image would differ (slim base layer,
+    compressed layers, no pip cache) but this is the best measurement
+    available without Docker.
+  - Server process confirmed killed afterward (`netstat` -> find the
+    PID bound to :7861 -> `Stop-Process`); a post-kill health request
+    returned connection-refused. Scratch directory cleaned back down
+    to 9.9 MB (the staged code only, `.venv` removed).
+- Full local re-verification after all changes: `uv run pytest -q` ->
+  **24 passed** (22 from Phase 5.2 + 2 new `ARGUS_DB_PATH` tests),
+  43.96s. `cd frontend && npm run lint` (oxlint) -- clean. `npm run
+  build` -- succeeded. `sha256sum argus.db` identical before and after
+  this entire phase; `git status --short argus.db` empty throughout.
+- Files changed: `backend/db/session.py`, `backend/.env.example`,
+  `frontend/.env.example`, `docs/PROJECT_LOG.md` (this entry). Files
+  added: `backend/tests/test_db_path_config.py`, `deploy/hf-space/
+  {Dockerfile,README.md,requirements.txt}`, `scripts/build_space.py`,
+  `frontend/vercel.json`, `docs/DEPLOYMENT.md`. `README.md` was NOT
+  touched -- no deployment claim added anywhere, per the task.
+- Could not verify: an actual Docker build/run (no Docker on this
+  machine -- the clean-venv run above is the closest available proxy,
+  matching the Dockerfile's own install steps line-for-line, but not
+  identical to a real container); real image size on Hugging Face's
+  infrastructure; anything about actually creating a Space or a Vercel
+  project (not attempted, per the task -- `docs/DEPLOYMENT.md` lists
+  those as manual human steps).
+
+## Phase 5.4 -- Real deployment: Google Cloud Run + Vercel (Hugging Face Docker Spaces require a paid plan)
+
+- **Hugging Face Docker Spaces turned out to be a paid feature** --
+  discovered when actually trying to create one for the Phase 5.3
+  Space, not before. HF was dropped as the backend host; the staged
+  folder and Dockerfile built in Phase 5.3 (`scripts/build_space.py`,
+  `deploy/hf-space/`) were kept **unchanged** and reused as the source
+  for a Google Cloud Run deploy instead -- same image, same port
+  (7860), same non-root user, same CPU-only torch install. Neither the
+  folder name nor `scripts/build_space.py` were touched; re-ran the
+  script in this phase to confirm it still produces the identical
+  output (**33 files, 9.63 MB total, 0 files over 10 MB**).
+- **Backend deployed to Google Cloud Run**: service `argus-api`,
+  region `us-central1`,
+  `https://argus-api-885858341360.us-central1.run.app`. Built via
+  `gcloud run deploy argus-api --source build/space --region
+  us-central1 --allow-unauthenticated --port 7860 --memory 2Gi --cpu 1
+  --min-instances 0 --max-instances 1 --timeout 300` -- Cloud Build
+  builds the image directly from the staged `build/space/` directory
+  (the same Dockerfile from Phase 5.3), no manual `docker build`
+  needed. `CORS_ORIGINS` set via `gcloud run services update argus-api
+  --region us-central1 --update-env-vars
+  CORS_ORIGINS=https://argus-gamma-puce.vercel.app` -- the exact
+  Vercel origin, `https`, no trailing slash, never `*`.
+- **One-time GCP gotcha, confirmed by hitting it**: on a new project,
+  `gcloud run deploy --source` builds via Cloud Build running as the
+  project's default compute service account
+  (`<project-number>-compute@developer.gserviceaccount.com`). Without
+  explicit grants, the build fails with a bare `PERMISSION_DENIED`
+  that does not name the missing role. Fixed by granting that service
+  account `roles/cloudbuild.builds.builder`,
+  `roles/storage.objectAdmin`, `roles/artifactregistry.writer`, and
+  `roles/logging.logWriter` once per project. Also required: a billing
+  account **linked** to the project before any build will run at all
+  (a separate failure mode from the IAM one). A $1 budget alert was
+  created on the project -- alerts only, not a hard spending cap, so
+  it cannot itself stop the service from running.
+- **Frontend deployed to Vercel**:
+  `https://argus-gamma-puce.vercel.app`, root directory `frontend`,
+  `VITE_API_BASE_URL` set to
+  `https://argus-api-885858341360.us-central1.run.app/api/v1` as a
+  **build-time** Project env var before the first build (Phase 5.3
+  already confirmed this is inlined via `import.meta.env`, not read at
+  runtime). `frontend/vercel.json`'s SPA rewrite (Phase 5.3) used
+  as-is.
+- **Smoke test passed 2026-10-13**: walked the full flow on the live
+  Vercel URL against the live Cloud Run backend -- upload a CSV,
+  Results page renders, Player Detail opens with its SHAP explanation,
+  Clusters page renders, History shows the new analysis, delete it
+  from History. No browser console CORS errors.
+- **Docs**: rewrote `docs/DEPLOYMENT.md` around this Cloud Run +
+  Vercel path (prerequisites, exact `gcloud`/IAM commands, the Vercel
+  steps, the smoke test, a Troubleshooting section covering CORS
+  mismatches / `PERMISSION_DENIED` / unlinked billing / a stale
+  placeholder `VITE_API_BASE_URL`, and the cost/limits notes),
+  replacing the Hugging Face-only instructions. Kept one short note
+  under Prerequisites stating HF Docker Spaces require a paid plan and
+  were not used.
+- **README.md**: added a "Live demo" section near the top (after the
+  results screenshot, before "What it does") linking
+  `https://argus-gamma-puce.vercel.app` with three plain sentences --
+  it's a demo, History resets on backend restart, first request after
+  idle can take 15-30s -- and pointing to the existing "Honest
+  results" section for the demo-CSV-is-training-data caveat, rather
+  than repeating a performance claim. Changed the old "Runs locally;
+  not deployed" bullet under Design decisions to point at the new
+  section and `docs/DEPLOYMENT.md` instead.
+- **Hugging Face text updated, not removed**: `deploy/hf-space/README.md`
+  and `deploy/hf-space/Dockerfile` got short notes (as HTML/shell
+  comments) explaining the folder was built for an HF Space, HF Docker
+  Spaces need a paid plan, and the same folder/Dockerfile are now
+  reused unchanged for the Cloud Run build -- no rename, no behaviour
+  change. `backend/.env.example` and `frontend/.env.example`'s
+  `ARGUS_DB_PATH`/`VITE_API_BASE_URL` example comments were updated
+  from an HF Space URL shape to the real Cloud Run URL. Re-ran
+  `uv run python scripts/build_space.py` after these edits to confirm
+  it still stages the same 33 files/9.63 MB with no errors.
+- Full local re-verification after all changes: `uv run pytest -q` --
+  **24 passed**, 56.39s (same warnings as Phase 5.3: the `httpx`/
+  `starlette.testclient` deprecation notice, 3 shap
+  `PendingDeprecationWarning`s). `cd frontend && npm run lint`
+  (oxlint) -- clean. `npm run build` -- succeeded (`built in 1.68s`).
+  `sha256sum argus.db` identical before and after this entire phase
+  (`3bf53969f6cfe79a78b2d0e876d191448e54956a17bad8f5d59df79e7a215076`);
+  `git status --short argus.db` empty throughout. No application code
+  was touched this phase.
+- Files changed: `README.md`, `backend/.env.example`,
+  `deploy/hf-space/Dockerfile`, `deploy/hf-space/README.md`,
+  `docs/DEPLOYMENT.md` (rewritten), `frontend/.env.example`,
+  `docs/PROJECT_LOG.md` (this entry). No files added, none removed,
+  no renames -- `scripts/build_space.py` and the `deploy/hf-space/`
+  folder name are both unchanged from Phase 5.3.
+- Could not verify from inside this environment: the actual Cloud Run
+  build/deploy execution and the actual Vercel project creation (both
+  are real, already-completed deployments described to this session
+  as fact by the task, not actions taken by this session -- no
+  `gcloud`/Vercel commands were run here); real-world cold-start
+  timing beyond the stated ~15-30s; Cloud Run's real container image
+  size (Phase 5.3's clean-venv proxy, ~1.01 GB, is the only
+  measurement available from either phase).

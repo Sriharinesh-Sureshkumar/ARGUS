@@ -1,8 +1,20 @@
 # ARGUS
 
+[![CI](https://github.com/Sriharinesh-Sureshkumar/ARGUS/actions/workflows/ci.yml/badge.svg)](https://github.com/Sriharinesh-Sureshkumar/ARGUS/actions/workflows/ci.yml)
+
 **A**nomaly **R**ecognition and **G**ame **B**ehaviour **U**nderstanding **S**ystem — upload a CSV of per-player CS2 behaviour features and get back a ranked, explainable suspicion triage list, not a verdict.
 
 ![ARGUS results page](docs/screenshots/results.png)
+
+## Live demo
+
+**[argus-gamma-puce.vercel.app](https://argus-gamma-puce.vercel.app)**
+
+This is a demo. History resets whenever the backend restarts. The
+first request after the backend has been idle can take 15 to 30
+seconds to respond (cold start). The demo CSV rows are training data,
+so scores on them are not evidence of performance — see
+[Honest results](#honest-results) below.
 
 ## What it does
 
@@ -186,6 +198,26 @@ All routes are under `/api/v1`.
 | GET | `/player/{player_id}?analysis_id=` | One player's scores + (lazily computed, cached) SHAP explanation | 404 `analysis_not_found`, 404 `player_not_found` |
 | GET | `/clusters?analysis_id=` | Per-archetype summaries + every player's UMAP point (defaults to the latest analysis if `analysis_id` is omitted) | 404 `no_analyses`, 404 `analysis_not_found` |
 
+## Tests
+
+Backend tests (`backend/tests/`) hit a real FastAPI `TestClient` against the real committed model artifacts — nothing is mocked — but every database read/write is redirected to a throwaway SQLite file under pytest's `tmp_path`; the real `backend/argus.db` is never opened.
+
+```bash
+uv sync
+uv run pytest
+```
+
+Frontend checks:
+
+```bash
+cd frontend
+npm ci
+npm run lint
+npm run build
+```
+
+Both suites run in CI on every push/PR to `main` and `build` (`.github/workflows/ci.yml`).
+
 ## Screenshots
 
 | | |
@@ -229,7 +261,7 @@ ARGUS/
 - **SHAP is lazy and cached**: `POST /analyze` never computes SHAP (it was the dominant cost at upload time); the first view of a given player computes it once (a few seconds) and every later view of that player is a cache read.
 - **Training artifacts aren't in the repo**: the large raw per-tick arrays (`legit.npy`, `cheaters.npy`, the train/test splits) are gitignored. The one array the running backend actually needs — a deterministic 100-row SHAP background sample — is committed (`backend/trained_models/shap_background.npy`) and reproducible via `scripts/export_runtime_artifacts.py`.
 - **`train` is an optional dependency group**: `cleanlab` (used only to rebuild the cleaned training split) is not a runtime dependency of the serving backend; install it with `uv sync --extra train` only if you need to retrain.
-- **Runs locally; not deployed.** There is no hosted instance.
+- **Deployed as a demo, not a production service.** See [Live demo](#live-demo) above and `docs/DEPLOYMENT.md` for the exact deployment steps and limits.
 
 ## Datasets and credits
 
