@@ -8,6 +8,17 @@ app_port: 7860
 pinned: false
 ---
 
+<!--
+  This folder was built for a Hugging Face Space (Docker SDK), but
+  Docker Spaces turned out to require a paid Hugging Face plan, so HF
+  was not used for the live deployment. This folder, its Dockerfile,
+  and scripts/build_space.py are kept as-is and reused unchanged to
+  build the real backend on Google Cloud Run -- see
+  docs/DEPLOYMENT.md. The YAML front matter above is inert outside of
+  an actual HF Space; it is harmless if this file is staged alongside
+  the Cloud Run build.
+-->
+
 # ARGUS (backend API)
 
 This Space runs the ARGUS backend API only: a demo of a CS2 player

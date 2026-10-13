@@ -3059,3 +3059,104 @@ existing history.*
   infrastructure; anything about actually creating a Space or a Vercel
   project (not attempted, per the task -- `docs/DEPLOYMENT.md` lists
   those as manual human steps).
+
+## Phase 5.4 -- Real deployment: Google Cloud Run + Vercel (Hugging Face Docker Spaces require a paid plan)
+
+- **Hugging Face Docker Spaces turned out to be a paid feature** --
+  discovered when actually trying to create one for the Phase 5.3
+  Space, not before. HF was dropped as the backend host; the staged
+  folder and Dockerfile built in Phase 5.3 (`scripts/build_space.py`,
+  `deploy/hf-space/`) were kept **unchanged** and reused as the source
+  for a Google Cloud Run deploy instead -- same image, same port
+  (7860), same non-root user, same CPU-only torch install. Neither the
+  folder name nor `scripts/build_space.py` were touched; re-ran the
+  script in this phase to confirm it still produces the identical
+  output (**33 files, 9.63 MB total, 0 files over 10 MB**).
+- **Backend deployed to Google Cloud Run**: service `argus-api`,
+  region `us-central1`,
+  `https://argus-api-885858341360.us-central1.run.app`. Built via
+  `gcloud run deploy argus-api --source build/space --region
+  us-central1 --allow-unauthenticated --port 7860 --memory 2Gi --cpu 1
+  --min-instances 0 --max-instances 1 --timeout 300` -- Cloud Build
+  builds the image directly from the staged `build/space/` directory
+  (the same Dockerfile from Phase 5.3), no manual `docker build`
+  needed. `CORS_ORIGINS` set via `gcloud run services update argus-api
+  --region us-central1 --update-env-vars
+  CORS_ORIGINS=https://argus-gamma-puce.vercel.app` -- the exact
+  Vercel origin, `https`, no trailing slash, never `*`.
+- **One-time GCP gotcha, confirmed by hitting it**: on a new project,
+  `gcloud run deploy --source` builds via Cloud Build running as the
+  project's default compute service account
+  (`<project-number>-compute@developer.gserviceaccount.com`). Without
+  explicit grants, the build fails with a bare `PERMISSION_DENIED`
+  that does not name the missing role. Fixed by granting that service
+  account `roles/cloudbuild.builds.builder`,
+  `roles/storage.objectAdmin`, `roles/artifactregistry.writer`, and
+  `roles/logging.logWriter` once per project. Also required: a billing
+  account **linked** to the project before any build will run at all
+  (a separate failure mode from the IAM one). A $1 budget alert was
+  created on the project -- alerts only, not a hard spending cap, so
+  it cannot itself stop the service from running.
+- **Frontend deployed to Vercel**:
+  `https://argus-gamma-puce.vercel.app`, root directory `frontend`,
+  `VITE_API_BASE_URL` set to
+  `https://argus-api-885858341360.us-central1.run.app/api/v1` as a
+  **build-time** Project env var before the first build (Phase 5.3
+  already confirmed this is inlined via `import.meta.env`, not read at
+  runtime). `frontend/vercel.json`'s SPA rewrite (Phase 5.3) used
+  as-is.
+- **Smoke test passed 2026-10-13**: walked the full flow on the live
+  Vercel URL against the live Cloud Run backend -- upload a CSV,
+  Results page renders, Player Detail opens with its SHAP explanation,
+  Clusters page renders, History shows the new analysis, delete it
+  from History. No browser console CORS errors.
+- **Docs**: rewrote `docs/DEPLOYMENT.md` around this Cloud Run +
+  Vercel path (prerequisites, exact `gcloud`/IAM commands, the Vercel
+  steps, the smoke test, a Troubleshooting section covering CORS
+  mismatches / `PERMISSION_DENIED` / unlinked billing / a stale
+  placeholder `VITE_API_BASE_URL`, and the cost/limits notes),
+  replacing the Hugging Face-only instructions. Kept one short note
+  under Prerequisites stating HF Docker Spaces require a paid plan and
+  were not used.
+- **README.md**: added a "Live demo" section near the top (after the
+  results screenshot, before "What it does") linking
+  `https://argus-gamma-puce.vercel.app` with three plain sentences --
+  it's a demo, History resets on backend restart, first request after
+  idle can take 15-30s -- and pointing to the existing "Honest
+  results" section for the demo-CSV-is-training-data caveat, rather
+  than repeating a performance claim. Changed the old "Runs locally;
+  not deployed" bullet under Design decisions to point at the new
+  section and `docs/DEPLOYMENT.md` instead.
+- **Hugging Face text updated, not removed**: `deploy/hf-space/README.md`
+  and `deploy/hf-space/Dockerfile` got short notes (as HTML/shell
+  comments) explaining the folder was built for an HF Space, HF Docker
+  Spaces need a paid plan, and the same folder/Dockerfile are now
+  reused unchanged for the Cloud Run build -- no rename, no behaviour
+  change. `backend/.env.example` and `frontend/.env.example`'s
+  `ARGUS_DB_PATH`/`VITE_API_BASE_URL` example comments were updated
+  from an HF Space URL shape to the real Cloud Run URL. Re-ran
+  `uv run python scripts/build_space.py` after these edits to confirm
+  it still stages the same 33 files/9.63 MB with no errors.
+- Full local re-verification after all changes: `uv run pytest -q` --
+  **24 passed**, 56.39s (same warnings as Phase 5.3: the `httpx`/
+  `starlette.testclient` deprecation notice, 3 shap
+  `PendingDeprecationWarning`s). `cd frontend && npm run lint`
+  (oxlint) -- clean. `npm run build` -- succeeded (`built in 1.68s`).
+  `sha256sum argus.db` identical before and after this entire phase
+  (`3bf53969f6cfe79a78b2d0e876d191448e54956a17bad8f5d59df79e7a215076`);
+  `git status --short argus.db` empty throughout. No application code
+  was touched this phase.
+- Files changed: `README.md`, `backend/.env.example`,
+  `deploy/hf-space/Dockerfile`, `deploy/hf-space/README.md`,
+  `docs/DEPLOYMENT.md` (rewritten), `frontend/.env.example`,
+  `docs/PROJECT_LOG.md` (this entry). No files added, none removed,
+  no renames -- `scripts/build_space.py` and the `deploy/hf-space/`
+  folder name are both unchanged from Phase 5.3.
+- Could not verify from inside this environment: the actual Cloud Run
+  build/deploy execution and the actual Vercel project creation (both
+  are real, already-completed deployments described to this session
+  as fact by the task, not actions taken by this session -- no
+  `gcloud`/Vercel commands were run here); real-world cold-start
+  timing beyond the stated ~15-30s; Cloud Run's real container image
+  size (Phase 5.3's clean-venv proxy, ~1.01 GB, is the only
+  measurement available from either phase).

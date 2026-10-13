@@ -1,56 +1,114 @@
-# Deploying ARGUS (manual steps)
+# Deploying ARGUS
 
-ARGUS is **not currently deployed anywhere** — this document is a
-step-by-step guide for a human operator to do it manually. Nothing in
-this repo deploys, pushes to, or logs into either service on its own.
+ARGUS is deployed as a live demo:
 
-Two independent pieces: the backend API (Hugging Face Space, Docker
-SDK) and the frontend static site (Vercel). Deploy the backend first —
-the frontend build needs its URL.
+- **Frontend (Vercel)**: https://argus-gamma-puce.vercel.app
+- **Backend (Google Cloud Run)**: https://argus-api-885858341360.us-central1.run.app
 
-## 1. Backend: Hugging Face Space
+This document is the exact, reproducible path used to get there, so
+it can be repeated (e.g. after a redeploy, a new GCP project, or a
+rotated billing account). Nothing in this repo deploys, pushes to, or
+logs into either service on its own — every command below is run by a
+human operator.
 
-1. Stage the files the Space needs (nothing else — no `backend/data/`,
-   no notebooks, no tests, no `argus.db`, no dev tooling):
+Two independent pieces: the backend API (Cloud Run, Docker) and the
+frontend static site (Vercel). Deploy the backend first — the
+frontend build needs its URL.
+
+A note on Hugging Face: `deploy/hf-space/` was originally built for a
+Hugging Face Space (Docker SDK). Docker Spaces turned out to require a
+**paid** Hugging Face plan, so Hugging Face was **not used** for the
+live deployment. The staged folder (`scripts/build_space.py`) and the
+Dockerfile in `deploy/hf-space/` are reused as-is for the Cloud Run
+build below — the folder is not renamed and the script is unchanged.
+
+## Prerequisites
+
+- A Google Cloud project with billing enabled (a billing account must
+  be **linked** to the project before any build will succeed — see
+  Troubleshooting).
+- `gcloud` CLI installed and authenticated (`gcloud auth login`,
+  `gcloud config set project <project-id>`).
+- A Vercel account with this GitHub repo accessible to it.
+- `uv` (to run `scripts/build_space.py` locally before deploying).
+
+## 1. Backend: Google Cloud Run
+
+1. Stage the files the container needs (nothing else — no
+   `backend/data/`, no notebooks, no tests, no `argus.db`, no dev
+   tooling):
    ```bash
    uv run python scripts/build_space.py
    ```
    This writes `build/space/` and prints its total size plus any file
-   over 10 MB (none, as of Phase 5.3 — see the report below). If a
-   future retrain adds a file over 10 MB, enable `git-lfs` for it in
-   the Space repo before pushing (`git lfs track "*.ext"`).
-2. On huggingface.co: **New Space** → pick an owner/name → **SDK:
-   Docker** → create it. Note the Space's git URL
-   (`https://huggingface.co/spaces/<you>/<name>`).
-3. From `build/space/`, initialise git and push to that Space's git
-   remote (the Space's own "Files" tab shows the exact remote URL and
-   auth instructions — Spaces use a personal access token, not your
-   normal GitHub credentials):
+   over 10 MB (none, as of the last run — see `docs/PROJECT_LOG.md`,
+   Phase 5.3/5.4). `build/space/` is what `gcloud run deploy --source`
+   builds from in step 4.
+
+2. Enable the required APIs on the project (one-time per project):
    ```bash
-   cd build/space
-   git init
-   git add -A
-   git commit -m "Initial Space deploy"
-   git remote add space https://huggingface.co/spaces/<you>/<name>
-   git push space main
+   gcloud services enable run.googleapis.com \
+     cloudbuild.googleapis.com \
+     artifactregistry.googleapis.com
    ```
-4. In the Space's **Settings → Variables and secrets**, add:
-   - `CORS_ORIGINS` (secret or variable — not sensitive, but keep it
-     out of the Dockerfile) set to your Vercel frontend's real URL,
-     e.g. `https://argus-frontend.vercel.app`. **Never set this to
-     `*`.** If you also want to keep testing from `localhost:5173`
-     against the deployed Space, add it as a second comma-separated
-     origin.
-   - Leave `ARGUS_DB_PATH` unset — the Dockerfile already sets it to
-     `/data/argus.db`, a writable path inside the Space's container.
-5. Wait for the Space to build and start (the Space's own "Logs" tab
-   shows the Docker build output and the `[startup] scoring +
-   clustering warmup took ...` line once it's ready). Smoke test from
-   your own machine:
+
+3. **One-time IAM grant for a new project.** `gcloud run deploy
+   --source` builds the image via Cloud Build, which runs as the
+   project's default compute service account
+   (`<project-number>-compute@developer.gserviceaccount.com`). On a
+   fresh project this account does **not** have the roles it needs,
+   and the build fails with `PERMISSION_DENIED` rather than an IAM
+   error that names the missing role. Grant these four roles once:
    ```bash
-   curl https://<you>-<name>.hf.space/api/v1/health
+   PROJECT_NUMBER=$(gcloud projects describe <project-id> --format='value(projectNumber)')
+   SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+   gcloud projects add-iam-policy-binding <project-id> \
+     --member="serviceAccount:${SA}" --role="roles/cloudbuild.builds.builder"
+   gcloud projects add-iam-policy-binding <project-id> \
+     --member="serviceAccount:${SA}" --role="roles/storage.objectAdmin"
+   gcloud projects add-iam-policy-binding <project-id> \
+     --member="serviceAccount:${SA}" --role="roles/artifactregistry.writer"
+   gcloud projects add-iam-policy-binding <project-id> \
+     --member="serviceAccount:${SA}" --role="roles/logging.logWriter"
+   ```
+
+4. Deploy, building the image from the staged source directory:
+   ```bash
+   gcloud run deploy argus-api \
+     --source build/space \
+     --region us-central1 \
+     --allow-unauthenticated \
+     --port 7860 \
+     --memory 2Gi \
+     --cpu 1 \
+     --min-instances 0 \
+     --max-instances 1 \
+     --timeout 300
+   ```
+   This prints the service URL on success, e.g.
+   `https://argus-api-885858341360.us-central1.run.app`. Note it — the
+   frontend build needs it.
+
+5. Set `CORS_ORIGINS` to the exact Vercel origin (scheme + host, **no
+   trailing slash**, **never `*`**) once the Vercel URL exists (step
+   2 below). This can be set on first deploy or updated after:
+   ```bash
+   gcloud run services update argus-api \
+     --region us-central1 \
+     --update-env-vars CORS_ORIGINS=https://argus-gamma-puce.vercel.app
+   ```
+   A real service account has no `ARGUS_DB_PATH` override needed —
+   the Dockerfile already sets it to `/data/argus.db`, a writable path
+   inside the container's own (ephemeral) filesystem.
+
+6. Smoke test from your own machine:
+   ```bash
+   curl https://argus-api-885858341360.us-central1.run.app/api/v1/health
    ```
    Expect `{"status":"ok","models_loaded":true,"db_connected":true,...}`.
+   The first request after the service has scaled to zero will be slow
+   (cold start, ~15-30s) — this is expected, not a hang.
 
 ## 2. Frontend: Vercel
 
@@ -62,10 +120,10 @@ the frontend build needs its URL.
    detected.
 4. **Environment Variables** (Project Settings → Environment
    Variables, before the first build): add
-   `VITE_API_BASE_URL` = `https://<you>-<name>.hf.space/api/v1` (the
-   Space URL from step 1, with the `/api/v1` suffix — this is a
-   **build-time** value, baked into the static bundle by `vite build`;
-   changing it later requires a rebuild, not just a restart).
+   `VITE_API_BASE_URL` = `https://argus-api-885858341360.us-central1.run.app/api/v1`
+   (the Cloud Run URL from step 1.4, with the `/api/v1` suffix — this
+   is a **build-time** value, baked into the static bundle by `vite
+   build`; changing it later requires a rebuild, not just a restart).
 5. Deploy. `frontend/vercel.json` (committed) adds the SPA rewrite
    every route needs — without it, refreshing or deep-linking to e.g.
    `/results/3` would 404 instead of loading the React app and letting
@@ -73,39 +131,57 @@ the frontend build needs its URL.
 6. Redeploy if you changed `VITE_API_BASE_URL` after the first deploy
    (Vercel's dashboard → Deployments → "Redeploy", NOT just a page
    refresh — the env var is only read at build time).
-7. Smoke test: open the Vercel URL, confirm the Navbar loads with no
-   console CORS errors, upload `sample_data/demo_players.csv`, confirm
-   the results page renders. If you see a browser CORS error, re-check
-   step 1.4 — `CORS_ORIGINS` on the Space must match this exact Vercel
-   URL (scheme + host, no trailing slash).
+7. Confirm the Cloud Run service's `CORS_ORIGINS` (step 1.5) matches
+   this Vercel URL exactly, then re-run the smoke test below.
 
-## Known limits of this deployment shape
+## Smoke test (passed 2026-10-13)
 
-- **History is not persistent.** SQLite (`/data/argus.db` inside the
-  Space's own container filesystem) is wiped on every Space restart,
-  rebuild, or redeploy — expected free-tier behavior, not a bug.
-  Nothing uploaded to the hosted demo should be treated as saved.
-- **Cold starts.** A Space that's gone to sleep (free-tier Spaces
-  sleep after inactivity) takes time to rebuild its container and run
-  the startup warmup (model loading + the one-time UMAP/Numba JIT
-  compile, ~6.5s on top of normal startup — see
-  `docs/PROJECT_LOG.md`, Phase 4.1.7). The first request after a cold
-  start will be slow; this is normal, not a hang.
+Opened the Vercel URL and walked the full flow end to end: upload a
+CSV, Results page renders, open a player's detail (SHAP explanation
+loads), view the Clusters page, check History (the just-created
+analysis appears), delete it from History. All steps passed with no
+browser console CORS errors.
+
+## Troubleshooting
+
+- **Browser CORS error** (request fails, console shows a CORS
+  message, no `access-control-allow-origin` header on the response):
+  re-check that `CORS_ORIGINS` on the Cloud Run service is the
+  **exact** Vercel origin — scheme (`https://`), host, **no trailing
+  slash**, no path. Re-run step 1.5 and redeploy if it was wrong; this
+  is a client-side browser rejection, not a server error, so the
+  request can otherwise look successful in server logs.
+- **`PERMISSION_DENIED` during `gcloud run deploy --source`**: almost
+  always the one-time IAM grant (step 1.3) hasn't been applied yet on
+  this project. Re-run the four `add-iam-policy-binding` commands.
+- **Build/deploy fails with a billing-related error**: the project's
+  billing account isn't linked. Link one in the Cloud Console
+  (Billing → Link a billing account) before retrying. A small budget
+  alert (e.g. $1, alerts only — not a hard spending cap) is worth
+  setting up to get notified of unexpected usage.
+- **Frontend shows a network error / placeholder URL in requests**:
+  `VITE_API_BASE_URL` was left as a placeholder or dummy value, or was
+  set after the build instead of before it. It is build-time only —
+  fix the value in Vercel's Environment Variables and **redeploy**
+  (not just restart).
+
+## Cost and limits of this deployment shape
+
+- **Cloud Run scales to zero** (`--min-instances 0`): no cost while
+  idle, but the first request after idle has a cold start of roughly
+  **15-30 seconds** while the container starts and the model/UMAP
+  warmup runs. This is expected, not a bug.
+- **History is not persistent.** SQLite (`/data/argus.db`) lives
+  inside the Cloud Run container's own filesystem, which is wiped
+  whenever the container restarts, redeploys, or scales to zero and
+  back up. Nothing uploaded to the hosted demo should be treated as
+  saved.
 - **First SHAP call per player is slow.** `GET /player/{id}` computes
   SHAP lazily and caches it — the first view of any given player in a
-  given analysis takes a few seconds (~2-3s, consistent with every
-  prior measurement in `docs/PROJECT_LOG.md`, Phase 4.1.5/4.2.3);
-  every later view of that same player is instant (cache hit). This is
-  expected, not a deployment-specific regression.
-- **CORS must be configured correctly or the frontend can't reach the
-  backend at all** — browsers enforce this client-side regardless of
-  how the two services are hosted; see `docs/PROJECT_LOG.md`, Phase
-  4.5/4.5b for the exact mechanism and what a misconfigured value
-  looks like (an otherwise-successful request with no
-  `access-control-allow-origin` header, silently rejected by the
-  browser, not the server).
-- **Free-tier CPU-only inference.** The Space's Dockerfile installs
-  CPU wheels for torch (see `deploy/hf-space/Dockerfile`); this is
-  slower than a GPU build but was already the only configuration ever
-  measured/tested in this repo's local development (no GPU-specific
-  code path exists to lose).
+  given analysis takes a few seconds; every later view of that same
+  player is instant (cache hit).
+- **This is a demo**, sized at `--memory 2Gi --cpu 1
+  --max-instances 1` deliberately — it is not provisioned for real
+  concurrent load.
+- Hugging Face Docker Spaces were considered first but require a paid
+  plan, so they were not used; see the note under Prerequisites above.

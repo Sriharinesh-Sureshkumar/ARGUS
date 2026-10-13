@@ -1,4 +1,12 @@
-# ARGUS backend -- Hugging Face Space (Docker SDK), CPU-only.
+# ARGUS backend -- CPU-only container image.
+#
+# Originally built for a Hugging Face Space (Docker SDK); HF Docker
+# Spaces turned out to require a paid plan, so this image is instead
+# built and deployed via `gcloud run deploy --source` on Google Cloud
+# Run (docs/DEPLOYMENT.md). Kept in `deploy/hf-space/` unchanged --
+# the folder is not renamed and scripts/build_space.py still stages
+# from it -- since the image itself (CPU-only, port 7860, non-root
+# user) is identical either way.
 #
 # Built from a STAGED directory (scripts/build_space.py), not the repo
 # root -- only backend/ (code + trained_models, no data/notebooks/tests),
