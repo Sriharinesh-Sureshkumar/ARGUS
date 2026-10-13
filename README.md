@@ -345,7 +345,7 @@ timeline
 
 ## How this was built
 
-This project was built by me, using Claude Code (an AI coding agent) under my direction. I wrote the specifications for each phase, made every product and architecture decision (the dataset, the feature set, the model choices, the ranked-triage reframing, the deployment path), and reviewed and tested each step myself — including catching several of the bugs described in [Problems faced](#problems-faced-and-how-they-were-solved) before they went further. All git commits in this repository were made by me.
+I built this project myself. I wrote the specifications for each phase, made every product and architecture decision (the dataset, the feature set, the model choices, the ranked-triage reframing, the deployment path), and reviewed and tested each step myself — including catching several of the bugs described in [Problems faced](#problems-faced-and-how-they-were-solved) before they went further. All git commits in this repository were made by me.
 
 ## Limitations and future work
 
