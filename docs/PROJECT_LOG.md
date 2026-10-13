@@ -2899,3 +2899,163 @@ existing history.*
   confirm against) and the CI badge image therefore currently has
   nothing to render (it will populate once this workflow runs on
   GitHub after a future commit/push).
+
+## Phase 5.3 — Deployment files (Hugging Face Space + Vercel), not deployed
+
+- **ARGUS is NOT deployed anywhere by this phase.** Every file below is
+  prepared for a human to deploy manually later (see
+  `docs/DEPLOYMENT.md`); nothing here logs in, pushes to, or creates
+  anything on Hugging Face or Vercel.
+- Step 0 audit (read-only, before writing anything): `backend/trained_models/`
+  totals 9.0 MB across 9 files, largest `umap_model.pkl` (6.03 MB) --
+  nothing over 10 MB, so git-lfs is not needed for this Space.
+  `backend/db/session.py` hardcoded `sqlite:///./argus.db` with no env
+  override. `pyproject.toml`'s `[tool.uv.sources]` pins torch/
+  torchvision to the `pytorch-cu130` (CUDA) index for local GPU dev --
+  a free CPU Space needs the PyTorch CPU wheel index instead. `docker
+  --version` -> not found on this machine, so Step 3 verification used
+  a clean temporary venv instead of an actual container build/run.
+  Frontend: `VITE_API_BASE_URL` (build-time, `import.meta.env`) already
+  documented in `frontend/.env.example`; router is `react-router-dom`'s
+  `BrowserRouter` (real History API), which needs Vercel's SPA rewrite
+  for deep-linked routes to work.
+- `backend/db/session.py`: added `ARGUS_DB_PATH` env var (default
+  `./argus.db`, unchanged when unset) -- `SQLALCHEMY_DATABASE_URL` is
+  now built from it. `backend/tests/test_db_path_config.py` (new, 2
+  tests) verifies this in a **fresh subprocess** rather than by
+  reloading `db.session` in-process -- reloading would recreate its
+  module-level `engine`/`SessionLocal` against whatever path is active
+  at reload time and could silently repoint every other test in the
+  suite (which depends on `conftest.py`'s own patched engine) at a
+  stray file. `backend/.env.example` documents the new var.
+- `deploy/hf-space/`:
+  - `Dockerfile`: `python:3.11-slim`, non-root `argus` user (uid 1000),
+    listens on port 7860, `CMD uvicorn main:app --host 0.0.0.0 --port
+    7860 --app-dir backend`. Installs from `requirements.txt` (next
+    bullet) rather than `uv sync` against the staged `pyproject.toml`/
+    `uv.lock`, for two reasons confirmed by actually running each path
+    during this phase: (1) the lockfile's cu130 torch/torchvision pin,
+    worked around here with a separate `uv pip install
+    --extra-index-url https://download.pytorch.org/whl/cpu torch
+    torchvision`; (2) `uv sync --no-install-package jupyter
+    --no-install-package matplotlib --no-install-package seaborn`
+    (notebook-only packages, confirmed never imported by
+    `backend/main.py`/`core/`/`api/`/`db/` via grep) still pulled in
+    their full transitive tree (jupyterlab, notebook, ipykernel, pyzmq,
+    tornado, ...) -- 177 packages installed in a test run, vs 40 with
+    a hand-written runtime-only `requirements.txt`. `pyproject.toml`/
+    `uv.lock` are still staged for provenance (they describe the real
+    project) but are not what builds this image.
+    `ARGUS_DB_PATH=/data/argus.db`, `CORS_ORIGINS=""` (falls back to
+    `main.py`'s safe localhost default, never `*`, until the Space
+    operator sets a real value) set as image defaults; `/data` and
+    `/app` chowned to the non-root user.
+  - `requirements.txt`: the actual runtime import graph (fastapi,
+    numpy, pandas, python-multipart, scikit-learn, shap, sqlalchemy,
+    umap-learn, uvicorn) -- torch/torchvision deliberately absent
+    (installed separately, CPU wheels). `scikit-learn` is pinned
+    **exactly** to `==1.9.0` (not `>=`), unlike every other entry: a
+    floor-only `>=1.9.0` resolved to `1.9.1` during Step 3's clean-venv
+    verification and raised sklearn's own
+    `InconsistentVersionWarning` ("might lead to breaking code or
+    invalid results") on every one of the 4 committed `.pkl` model
+    loads at startup (IsolationForest, StandardScaler x2, KMeans) --
+    `uv.lock` confirms the real artifacts were pickled under exactly
+    `1.9.0`. Scores for the 8-player fixture were verified
+    byte-identical between the 1.9.0 (dev) and 1.9.1 (drifted) runs for
+    this specific pair of versions, but sklearn's own warning is
+    explicit guidance not to rely on that holding across releases, so
+    the pin removes the risk rather than re-verifying it on every
+    scikit-learn bump.
+  - `README.md`: Space card YAML front matter (`title: ARGUS`,
+    `sdk: docker`, `app_port: 7860`) plus a short description stating
+    plainly: this is a demo, a ranking tool not a verdict, and history
+    is ephemeral.
+- `scripts/build_space.py` (new): stages backend code + `trained_models`
+  (excluding `data/`, `notebooks/`, `tests/`, `__pycache__`),
+  `sample_data/`, `pyproject.toml`, `uv.lock`, `requirements.txt`, the
+  Dockerfile and Space README into `build/space/` (already covered by
+  the repo's existing blanket `build/` gitignore rule -- no new
+  gitignore entry needed). No `argus.db`, no dev files. Run output:
+  **33 files, 9.63 MB total, 0 files over 10 MB.**
+- CORS: documented (both in the Dockerfile's comments and
+  `docs/DEPLOYMENT.md`) that the Space operator must set `CORS_ORIGINS`
+  to the real Vercel URL via the Space's Settings -> Variables --
+  never `*`. Reuses the existing `_cors_origins()` mechanism from Phase
+  4.5b unchanged.
+- `frontend/vercel.json` (new): SPA rewrite (`/(.*)` -> `/index.html`)
+  -- required because the app uses `react-router-dom`'s `BrowserRouter`
+  (confirmed via `frontend/src/main.jsx`), which needs server-side
+  fallback for deep-linked/refreshed routes like `/results/3`.
+  `frontend/.env.example`: documented that `VITE_API_BASE_URL` is a
+  **build-time** value (Vite inlines `import.meta.env.*` into the
+  bundle), not read at runtime, so changing it on Vercel requires a
+  rebuild via the dashboard, not just a restart.
+- Verified the build-time claim directly, not just by reading Vite's
+  docs: `VITE_API_BASE_URL="https://dummy-argus-check.example.com/api/v1"
+  npm run build` then `grep -rl dummy-argus-check.example.com dist/` --
+  found inside `dist/assets/index-*.js`. Rebuilt immediately after with
+  no env var override to restore the normal default in the (gitignored,
+  never committed) local `dist/`.
+- Step 3 verification (Docker unavailable on this machine, confirmed by
+  `docker --version` -> command not found): staged `build/space/` was
+  copied into an isolated scratch directory (outside the repo, so the
+  running app could not accidentally fall back to any other repo file)
+  and run from a **fresh temporary venv** instead of a container:
+  - `uv venv .venv` (Python 3.11.15) +
+    `uv pip install --python .venv/Scripts/python.exe -r requirements.txt`
+    -- 40 packages installed (vs the 177-package `uv sync` path
+    rejected above).
+  - `uv pip install --python .venv/Scripts/python.exe
+    --extra-index-url https://download.pytorch.org/whl/cpu torch
+    torchvision` -- confirmed `torch==2.14.1+cpu`/
+    `torchvision==0.29.1+cpu` installed (the `+cpu` build tag confirms
+    no CUDA wheel was pulled).
+  - Started `uvicorn main:app --host 127.0.0.1 --port 7861 --app-dir
+    backend` from the isolated copy only, with `ARGUS_DB_PATH` pointed
+    at a throwaway file outside the repo -- never `backend/argus.db`.
+    Startup log: `[startup] scoring + clustering warmup took 11.81s`
+    (consistent with the UMAP/Numba JIT cost documented in Phase
+    4.1.7), then `Application startup complete.`
+  - `GET /api/v1/health` -> 200,
+    `{"status":"ok","models_loaded":true,"db_connected":true,...}`.
+  - `POST /api/v1/analyze` with `backend/tests/fixtures/test_8_players.csv`
+    -> 200, 8 players scored/ranked/clustered, 4 flagged at the 0.5
+    threshold -- `ensemble_score` values verified identical (to 6
+    decimal places) against the same fixture scored directly via
+    `core.inference.score_players()` in the main dev environment (the
+    `scikit-learn==1.9.0` pin above was applied after this comparison,
+    based on the warning it surfaced, not because the scores
+    themselves were wrong here).
+  - Warm request latency (3 runs each, `curl -w %{time_total}`):
+    `GET /health` ~4.4-5.2ms; `POST /analyze` (8 players) ~64-69ms --
+    consistent with Phase 4.1.7's post-warmup steady state.
+  - Venv size (proxy for image weight, not a real Docker image --
+    no base-image layering/compression to compare against): 990 MB
+    (`.venv`) + 9.6 MB (staged code/artifacts) = **1.01 GB total**,
+    dominated by torch's CPU wheel (torch alone downloaded as 118.2 MB
+    compressed). A real Docker image would differ (slim base layer,
+    compressed layers, no pip cache) but this is the best measurement
+    available without Docker.
+  - Server process confirmed killed afterward (`netstat` -> find the
+    PID bound to :7861 -> `Stop-Process`); a post-kill health request
+    returned connection-refused. Scratch directory cleaned back down
+    to 9.9 MB (the staged code only, `.venv` removed).
+- Full local re-verification after all changes: `uv run pytest -q` ->
+  **24 passed** (22 from Phase 5.2 + 2 new `ARGUS_DB_PATH` tests),
+  43.96s. `cd frontend && npm run lint` (oxlint) -- clean. `npm run
+  build` -- succeeded. `sha256sum argus.db` identical before and after
+  this entire phase; `git status --short argus.db` empty throughout.
+- Files changed: `backend/db/session.py`, `backend/.env.example`,
+  `frontend/.env.example`, `docs/PROJECT_LOG.md` (this entry). Files
+  added: `backend/tests/test_db_path_config.py`, `deploy/hf-space/
+  {Dockerfile,README.md,requirements.txt}`, `scripts/build_space.py`,
+  `frontend/vercel.json`, `docs/DEPLOYMENT.md`. `README.md` was NOT
+  touched -- no deployment claim added anywhere, per the task.
+- Could not verify: an actual Docker build/run (no Docker on this
+  machine -- the clean-venv run above is the closest available proxy,
+  matching the Dockerfile's own install steps line-for-line, but not
+  identical to a real container); real image size on Hugging Face's
+  infrastructure; anything about actually creating a Space or a Vercel
+  project (not attempted, per the task -- `docs/DEPLOYMENT.md` lists
+  those as manual human steps).
